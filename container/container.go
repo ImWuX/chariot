@@ -12,11 +12,15 @@ import (
 	"github.com/docker/docker/pkg/reexec"
 )
 
-type ChariotContainer struct {
-	path string
+type ExecContext struct {
+	containerPath string
+	cwd           string
+	mounts        []Mount
+	stdOut        io.Writer
+	stdErr        io.Writer
 }
 
-type ChariotContainerMount struct {
+type Mount struct {
 	To   string
 	From string
 }
@@ -28,7 +32,7 @@ func HostInit() {
 	}
 }
 
-func Exec(containerPath string, cmd string, cwd string, mounts []ChariotContainerMount, stdOut io.Writer, stdErr io.Writer) error {
+func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut io.Writer, stdErr io.Writer) error {
 	var strs []string = make([]string, 0)
 	for _, mount := range mounts {
 		strs = append(strs, mount.To+":"+mount.From)
@@ -62,14 +66,18 @@ func Exec(containerPath string, cmd string, cwd string, mounts []ChariotContaine
 	return proc.Wait()
 }
 
-func Use(path string) *ChariotContainer {
-	var container ChariotContainer
-	container.path = path
-	return &container
+func Use(containerPath string, cwd string, mounts []Mount, stdOut io.Writer, stdErr io.Writer) *ExecContext {
+	var context ExecContext
+	context.containerPath = containerPath
+	context.cwd = cwd
+	context.mounts = mounts
+	context.stdOut = stdOut
+	context.stdErr = stdErr
+	return &context
 }
 
-func (container *ChariotContainer) Exec(cmd string, cwd string, mounts []ChariotContainerMount, stdOut io.Writer, stdErr io.Writer) error {
-	return Exec(container.path, cmd, cwd, mounts, stdOut, stdErr)
+func (context *ExecContext) Exec(cmd string) error {
+	return Exec(context.containerPath, cmd, context.cwd, context.mounts, context.stdOut, context.stdErr)
 }
 
 func containerEntry() {
