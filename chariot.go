@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 type ChariotContext struct {
 	cachePath string
 	config    Config
+
+	targetQueue []string
 
 	optThreads        uint
 	optDebugError     bool
@@ -181,6 +184,7 @@ func main() {
 		optDebugVerbose:   *debugVerbose,
 		optRefetchSources: *refetchSources,
 		optResetContainer: *resetContainer,
+		targetQueue:       make([]string, 0),
 	}
 
 	if err := os.MkdirAll(context.cachePath, 0755); err != nil {
@@ -198,16 +202,24 @@ func main() {
 	}
 
 	for _, tag := range targets {
-		context.doTarget(tag)
+		context.doTarget(tag, true)
 	}
 	fmt.Println("Done")
 }
 
-func (ctx *ChariotContext) doTarget(tag string) {
+func (ctx *ChariotContext) doTarget(tag string, force bool) {
 	target := ctx.config.FindTarget(tag)
 	if target == nil {
 		fmt.Printf("WARNING: Could not locate target %s. Skipping...\n", tag)
 		return
+	}
+
+	ctx.targetQueue = append(ctx.targetQueue, tag)
+	for _, dep := range target.Dependencies {
+		if slices.ContainsFunc(ctx.targetQueue, func(e string) bool { return e == dep }) {
+			continue
+		}
+		ctx.doTarget(dep, false)
 	}
 
 	for _, sourceTag := range target.Sources {
