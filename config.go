@@ -15,7 +15,8 @@ type ConfigSource struct {
 	Type string
 	Url  string
 
-	Modifiers []struct {
+	Dependencies []string
+	Modifiers    []struct {
 		Mod  string
 		Type string
 		Url  string

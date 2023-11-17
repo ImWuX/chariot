@@ -293,6 +293,10 @@ func (ctx *ChariotContext) doSource(tag string) bool {
 		return false
 	}
 
+	for _, dep := range source.Dependencies {
+		ctx.doSource(dep)
+	}
+
 	fmt.Printf("Source: %s\n", tag)
 
 	sourcePath := filepath.Join(ctx.cachePath, "sources", tag)
@@ -392,10 +396,14 @@ func (ctx *ChariotContext) doSource(tag string) bool {
 		verboseWriter = &writer
 	}
 	execCtx := ChariotContainer.Use(filepath.Join(ctx.cachePath, "container"), "/chariot/source", []ChariotContainer.Mount{
+		{To: "/chariot/sources", From: filepath.Join(ctx.cachePath, "sources")},
 		{To: "/chariot/source", From: sourcePath},
 	}, verboseWriter, errWriter)
 
 	for _, prepareCmd := range source.Prepare {
+		for _, tag := range source.Dependencies {
+			prepareCmd = strings.ReplaceAll(prepareCmd, fmt.Sprintf("$SOURCE:%s", tag), fmt.Sprintf("/chariot/sources/%s", tag))
+		}
 		execCtx.Exec(prepareCmd)
 	}
 	return true
