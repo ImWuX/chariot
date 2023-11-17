@@ -311,6 +311,7 @@ func (ctx *ChariotContext) doSource(tag string) bool {
 	s.Suffix = fmt.Sprintf(" Fetching source %s", tag)
 	s.Start()
 	defer s.Stop()
+	writer := SpinnerWriter{spinner: s, buf: make([]byte, 0)}
 
 	getSource := func(dest string, srcType string, url string) bool {
 		var cmd *exec.Cmd
@@ -380,6 +381,22 @@ func (ctx *ChariotContext) doSource(tag string) bool {
 		if err := os.RemoveAll(tmp); err != nil {
 			panic(err)
 		}
+	}
+
+	var errWriter io.Writer
+	if ctx.optDebugError {
+		errWriter = &writer
+	}
+	var verboseWriter io.Writer
+	if ctx.optDebugVerbose {
+		verboseWriter = &writer
+	}
+	execCtx := ChariotContainer.Use(filepath.Join(ctx.cachePath, "container"), "/chariot/source", []ChariotContainer.Mount{
+		{To: "/chariot/source", From: sourcePath},
+	}, verboseWriter, errWriter)
+
+	for _, prepareCmd := range source.Prepare {
+		execCtx.Exec(prepareCmd)
 	}
 	return true
 }

@@ -20,6 +20,7 @@ type ConfigSource struct {
 		Type string
 		Url  string
 	}
+	Prepare []string
 }
 
 type ConfigTarget struct {
