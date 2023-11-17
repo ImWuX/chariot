@@ -18,6 +18,7 @@ import (
 )
 
 type ChariotContext struct {
+	cwd       string
 	cachePath string
 	config    Config
 
@@ -146,7 +147,7 @@ func (ctx *ChariotContext) initContainer() {
 	execContext.Exec("pacman --noconfirm -Sy archlinux-keyring")
 	execContext.Exec("pacman --noconfirm -S pacman pacman-mirrorlist")
 	execContext.Exec("pacman --noconfirm -Syu")
-	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which")
+	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc")
 }
 
 func main() {
@@ -177,6 +178,7 @@ func main() {
 	config := ReadConfig(*configPath)
 
 	context := ChariotContext{
+		cwd:               cwd,
 		cachePath:         *cachePath,
 		config:            config,
 		optThreads:        *threads,
@@ -191,6 +193,9 @@ func main() {
 		panic(err)
 	}
 	if err := os.MkdirAll(filepath.Join(context.cachePath, "root"), 0755); err != nil {
+		panic(err)
+	}
+	if err := os.MkdirAll(filepath.Join(context.cachePath, "sources"), 0755); err != nil {
 		panic(err)
 	}
 
@@ -223,7 +228,10 @@ func (ctx *ChariotContext) doTarget(tag string, force bool) {
 	}
 
 	for _, sourceTag := range target.Sources {
-		ctx.doSource(sourceTag)
+		if !ctx.doSource(sourceTag) {
+			fmt.Printf("WARNING: Missing source %s for target %s. Skipping...\n", sourceTag, tag)
+			return
+		}
 	}
 
 	fmt.Printf("Target: %s\n", tag)
@@ -249,6 +257,7 @@ func (ctx *ChariotContext) doTarget(tag string, force bool) {
 	}
 	execContext := ChariotContainer.Use(filepath.Join(ctx.cachePath, "container"), "/chariot/build", []ChariotContainer.Mount{
 		{To: "/chariot/sources", From: filepath.Join(ctx.cachePath, "sources")},
+		{To: "/chariot/root", From: filepath.Join(ctx.cachePath, "root")},
 		{To: "/chariot/build", From: buildDir},
 	}, verboseWriter, errWriter)
 
@@ -277,24 +286,24 @@ func (ctx *ChariotContext) doTarget(tag string, force bool) {
 	}
 }
 
-func (ctx *ChariotContext) doSource(tag string) {
+func (ctx *ChariotContext) doSource(tag string) bool {
 	source := ctx.config.FindSource(tag)
 	if source == nil {
 		fmt.Printf("WARNING: Could not locate source %s. Skipping...\n", tag)
-		return
+		return false
 	}
 
 	fmt.Printf("Source: %s\n", tag)
 
-	sourceDir := filepath.Join(ctx.cachePath, "sources", tag)
+	sourcePath := filepath.Join(ctx.cachePath, "sources", tag)
 
-	if _, err := os.Stat(sourceDir); err == nil {
+	if _, err := os.Stat(sourcePath); err == nil {
 		if ctx.optRefetchSources {
-			if err := os.RemoveAll(sourceDir); err != nil {
+			if err := os.RemoveAll(sourcePath); err != nil {
 				panic(err)
 			}
 		} else {
-			return
+			return true
 		}
 	}
 
@@ -303,38 +312,74 @@ func (ctx *ChariotContext) doSource(tag string) {
 	s.Start()
 	defer s.Stop()
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		panic(err)
+	getSource := func(dest string, srcType string, url string) bool {
+		var cmd *exec.Cmd
+		switch srcType {
+		case "tar":
+			if err := os.Mkdir(sourcePath, 0755); err != nil {
+				panic(err)
+			}
+			cmd = exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar --strip-components 1 -xvz -C %s", url, dest))
+		case "local":
+			cmd = exec.Command("cp", "-r", url, dest)
+		default:
+			s.Stop()
+			fmt.Printf("WARNING: Source %s has an invalid type (%s). Skipping...\n", tag, srcType)
+			return false
+		}
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		if err := cmd.Wait(); err != nil {
+			panic(err)
+		}
+		return true
 	}
 
-	switch source.Type {
-	case "tar":
-		cmd := exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar xvz -C %s", source.Url, sourceDir))
-		if err := cmd.Start(); err != nil {
-			panic(err)
-		}
-		if err := cmd.Wait(); err != nil {
-			panic(err)
-		}
-	case "git":
-		cmd := exec.Command("git", "clone", source.Url, sourceDir)
-		if err := cmd.Start(); err != nil {
-			panic(err)
-		}
-		if err := cmd.Wait(); err != nil {
-			panic(err)
-		}
-	case "local":
-		cmd := exec.Command("cp", "-r", source.Url, sourceDir)
-		if err := cmd.Start(); err != nil {
-			panic(err)
-		}
-		if err := cmd.Wait(); err != nil {
-			panic(err)
-		}
-	default:
-		s.Stop()
-		fmt.Printf("WARNING: Source %s has an invalid type (%s). Skipping...\n", tag, source.Type)
-		return
+	if !getSource(sourcePath, source.Type, source.Url) {
+		return false
 	}
+
+	for _, modifier := range source.Modifiers {
+		tmp, err := os.MkdirTemp("", "chariot-tmp-source-*")
+		if err != nil {
+			panic(err)
+		}
+
+		modSrc := filepath.Join(tmp, "mod")
+
+		if !getSource(modSrc, modifier.Type, modifier.Url) {
+			if err := os.RemoveAll(tmp); err != nil {
+				panic(err)
+			}
+			return false
+		}
+
+		var cmd *exec.Cmd
+		switch modifier.Mod {
+		case "patch":
+			cmd = exec.Command("patch", "-p1", "-i", modSrc)
+		case "merge":
+			cmd = exec.Command("cp", "-r", "-T", modSrc, ".")
+		default:
+			s.Stop()
+			fmt.Printf("WARNING: Source %s has an invalid source modifier (%s). Skipping...\n", tag, modifier.Mod)
+			if err := os.RemoveAll(tmp); err != nil {
+				panic(err)
+			}
+			return false
+		}
+		cmd.Dir = sourcePath
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		if err := cmd.Wait(); err != nil {
+			panic(err)
+		}
+
+		if err := os.RemoveAll(tmp); err != nil {
+			panic(err)
+		}
+	}
+	return true
 }
