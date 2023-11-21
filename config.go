@@ -12,20 +12,20 @@ type ConfigProject struct {
 }
 
 type ConfigSource struct {
+	Dependencies []string
+
 	Type string
 	Url  string
 
-	Dependencies []string
-	Modifiers    []struct {
-		Mod  string
-		Type string
-		Url  string
+	Modifiers []struct {
+		Type   string
+		Source string
+		File   string
+		Cmd    string
 	}
-	Prepare []string
 }
 
 type ConfigTarget struct {
-	Sources      []string
 	Dependencies []string
 
 	Configure []string
@@ -36,6 +36,7 @@ type ConfigTarget struct {
 type Config struct {
 	Project ConfigProject
 	Source  map[string]ConfigSource
+	Host    map[string]ConfigTarget
 	Target  map[string]ConfigTarget
 }
 
@@ -60,6 +61,16 @@ func (cfg *Config) FindTarget(tag string) *ConfigTarget {
 			continue
 		}
 		return &target
+	}
+	return nil
+}
+
+func (cfg *Config) FindHostTarget(tag string) *ConfigTarget {
+	for hostTargetTag, hostTarget := range cfg.Host {
+		if hostTargetTag != tag {
+			continue
+		}
+		return &hostTarget
 	}
 	return nil
 }
