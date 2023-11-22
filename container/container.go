@@ -32,7 +32,7 @@ func HostInit() {
 	}
 }
 
-func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut io.Writer, stdErr io.Writer) error {
+func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut io.Writer, stdErr io.Writer, stdIn io.Reader) error {
 	var strs []string = make([]string, 0)
 	for _, mount := range mounts {
 		strs = append(strs, mount.To+":"+mount.From)
@@ -45,10 +45,13 @@ func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut i
 	if stdErr != nil {
 		proc.Stderr = stdErr
 	}
+	if stdIn != nil {
+		proc.Stdin = stdIn
+	}
 	proc.Env = []string{
 		"LANG=en_US.UTF-8",
 		"LC_COLLATE=C",
-		"PATH=/usr/bin:/usr/local/bin:/usr/local/sbin:/usr/bin/core_perl:/chariot/tools/bin",
+		"PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/bin/core_perl",
 	}
 	proc.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER,
@@ -77,7 +80,7 @@ func Use(containerPath string, cwd string, mounts []Mount, stdOut io.Writer, std
 }
 
 func (context *ExecContext) Exec(cmd string) error {
-	return Exec(context.containerPath, cmd, context.cwd, context.mounts, context.stdOut, context.stdErr)
+	return Exec(context.containerPath, cmd, context.cwd, context.mounts, context.stdOut, context.stdErr, nil)
 }
 
 func containerEntry() {
@@ -91,6 +94,7 @@ func containerEntry() {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
 	cmd.Dir = cwd
 
 	if err := cmd.Start(); err != nil {

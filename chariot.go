@@ -29,12 +29,12 @@ type ChariotState struct {
 }
 
 type ChariotContext struct {
-	cwd       string
-	cachePath string
-	config    Config
-	options   ChariotOptions
-	state     ChariotState
-	cli       *ChariotCLI.CLI
+	cwd     string
+	cache   ChariotCache
+	config  Config
+	options ChariotOptions
+	state   ChariotState
+	cli     *ChariotCLI.CLI
 }
 
 const (
@@ -48,9 +48,7 @@ func (ctx *ChariotContext) wipeContainer() {
 	ctx.cli.StartSpinner("Deleting container")
 	defer ctx.cli.StopSpinner()
 
-	containerPath := filepath.Join(ctx.cachePath, "container")
-
-	if err := filepath.WalkDir(containerPath, func(path string, d fs.DirEntry, err error) error {
+	if err := filepath.WalkDir(ctx.cache.Container(), func(path string, d fs.DirEntry, err error) error {
 		if !d.IsDir() {
 			return nil
 		}
@@ -59,7 +57,7 @@ func (ctx *ChariotContext) wipeContainer() {
 		panic(err)
 	}
 
-	if err := os.RemoveAll(containerPath); err != nil {
+	if err := os.RemoveAll(ctx.cache.Container()); err != nil {
 		panic(err)
 	}
 }
@@ -68,12 +66,10 @@ func (ctx *ChariotContext) initContainer() {
 	ctx.cli.StartSpinner("Initializing container")
 	defer ctx.cli.StopSpinner()
 
-	containerPath := filepath.Join(ctx.cachePath, "container")
-
-	if _, err := os.Stat(filepath.Join(ctx.cachePath, "archlinux-bootstrap-x86_64.tar.gz")); err != nil {
+	if _, err := os.Stat(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")); err != nil {
 		ctx.cli.SetSpinnerMessage("Downloading arch linux image")
 		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
-		cmd.Dir = ctx.cachePath
+		cmd.Dir = ctx.cache.Path()
 		if err := cmd.Start(); err != nil {
 			panic(err)
 		}
@@ -84,7 +80,7 @@ func (ctx *ChariotContext) initContainer() {
 
 	ctx.cli.SetSpinnerMessage("Extracting arch linux image")
 	cmd := exec.Command("bsdtar", "-zxf", "archlinux-bootstrap-x86_64.tar.gz")
-	cmd.Dir = ctx.cachePath
+	cmd.Dir = ctx.cache.Path()
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
@@ -93,7 +89,7 @@ func (ctx *ChariotContext) initContainer() {
 	}
 
 	cmd = exec.Command("mv", "root.x86_64", "container")
-	cmd.Dir = ctx.cachePath
+	cmd.Dir = ctx.cache.Path()
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
@@ -103,7 +99,7 @@ func (ctx *ChariotContext) initContainer() {
 
 	ctx.cli.SetSpinnerMessage("Rewriting container permissions")
 	cmd = exec.Command("sh", "-c", "for f in $(find ./container -perm 000 2> /dev/null); do chmod 755 \"$f\"; done")
-	cmd.Dir = ctx.cachePath
+	cmd.Dir = ctx.cache.Path()
 	if err := cmd.Start(); err != nil {
 		panic(err)
 	}
@@ -112,7 +108,7 @@ func (ctx *ChariotContext) initContainer() {
 	}
 
 	ctx.cli.SetSpinnerMessage("Running initialization commands")
-	execContext := ChariotContainer.Use(containerPath, "/root", []ChariotContainer.Mount{}, nil, nil)
+	execContext := ChariotContainer.Use(ctx.cache.Container(), "/root", []ChariotContainer.Mount{}, nil, nil)
 	execContext.Exec("echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.leaseweb.net/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
@@ -124,6 +120,25 @@ func (ctx *ChariotContext) initContainer() {
 	execContext.Exec("pacman --noconfirm -S pacman pacman-mirrorlist")
 	execContext.Exec("pacman --noconfirm -Syu")
 	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran")
+}
+
+func (ctx *ChariotContext) shell() {
+	if err := ChariotContainer.Exec(
+		ctx.cache.Container(),
+		"sh",
+		"/",
+		[]ChariotContainer.Mount{
+			{To: "/chariot/root", From: ctx.cache.Sysroot()},
+			{To: "/chariot/sources", From: ctx.cache.Sources()},
+			{To: "/chariot/build", From: ctx.cache.Builds(false)},
+			{To: "/chariot/host-build", From: ctx.cache.Builds(true)},
+		},
+		os.Stdout,
+		os.Stderr,
+		os.Stdin,
+	); err != nil {
+		panic(err)
+	}
 }
 
 func main() {
@@ -147,16 +162,17 @@ func main() {
 	resetContainer := flag.Bool("reset-container", false, "Create a new container")
 	debugError := flag.Bool("debug-err", true, "Turn on error debugging")
 	debugVerbose := flag.Bool("debug-verbose", false, "Turn on verbose debugging")
+	shell := flag.Bool("shell", false, "Open shell into the container")
 	threads := flag.Uint("threads", 8, "Number of simultaneous threads to use")
 	flag.Parse()
 	targets := flag.Args()
 
 	config := ReadConfig(*configPath)
 
-	context := ChariotContext{
-		cwd:       cwd,
-		cachePath: *cachePath,
-		config:    config,
+	ctx := ChariotContext{
+		cwd:    cwd,
+		cache:  ChariotCache(*cachePath),
+		config: config,
 		options: ChariotOptions{
 			threads:        *threads,
 			debugError:     *debugError,
@@ -171,27 +187,26 @@ func main() {
 		cli: ChariotCLI.CreateCLI(os.Stdout),
 	}
 
-	if err := os.MkdirAll(context.cachePath, 0755); err != nil {
-		panic(err)
-	}
-	if err := os.MkdirAll(filepath.Join(context.cachePath, "root"), 0755); err != nil {
-		panic(err)
-	}
-	if err := os.MkdirAll(filepath.Join(context.cachePath, "sources"), 0755); err != nil {
+	if err := ctx.cache.Init(); err != nil {
 		panic(err)
 	}
 
-	if context.options.resetContainer {
-		context.wipeContainer()
+	if ctx.options.resetContainer {
+		ctx.wipeContainer()
 	}
-	if !FileExists(filepath.Join(context.cachePath, "container")) {
-		context.initContainer()
+	if !FileExists(ctx.cache.Container()) {
+		ctx.initContainer()
 	}
 
-	for _, tag := range context.state.targets {
-		context.do(tag)
+	if *shell {
+		ctx.shell()
+		return
 	}
-	context.cli.Println("DONE")
+
+	for _, tag := range ctx.state.targets {
+		ctx.do(tag)
+	}
+	ctx.cli.Println("DONE")
 }
 
 func (ctx *ChariotContext) recurseDeps(deps []string) bool {
@@ -286,7 +301,7 @@ notFound:
 
 func (ctx *ChariotContext) doSource(tag string, source *ConfigSource) (ok bool) {
 	ctx.cli.Printf("SOURCE: %s\n", tag)
-	sourcePath := filepath.Join(ctx.cachePath, "sources", tag)
+	sourcePath := ctx.cache.Source(tag)
 	if FileExists(sourcePath) {
 		if !ArrIncludes(ctx.state.targets, MakeTag(tag, "source")) {
 			return true
@@ -331,7 +346,7 @@ func (ctx *ChariotContext) doSource(tag string, source *ConfigSource) (ok bool) 
 
 	ctx.cli.SetSpinnerMessage("Applying source modifications %s", tag)
 	for _, modifier := range source.Modifiers {
-		modSourcePath := filepath.Join(ctx.cachePath, "sources", modifier.Source)
+		modSourcePath := ctx.cache.Source(modifier.Source)
 		switch modifier.Type {
 		case "patch":
 			cmd = exec.Command("patch", "-p1", "-i", filepath.Join(modSourcePath, modifier.File))
@@ -341,8 +356,8 @@ func (ctx *ChariotContext) doSource(tag string, source *ConfigSource) (ok bool) 
 			cmd = exec.Command("cp", "-r", fmt.Sprintf("%s/.", modSourcePath), ".")
 		case "exec":
 			verboseWriter, errorWriter := ctx.writers()
-			execCtx := ChariotContainer.Use(filepath.Join(ctx.cachePath, "container"), "/chariot/source", []ChariotContainer.Mount{
-				{To: "/chariot/sources", From: filepath.Join(ctx.cachePath, "sources")},
+			execCtx := ChariotContainer.Use(ctx.cache.Container(), "/chariot/source", []ChariotContainer.Mount{
+				{To: "/chariot/sources", From: ctx.cache.Sources()},
 				{To: "/chariot/source", From: sourcePath},
 			}, verboseWriter, errorWriter)
 
@@ -380,13 +395,11 @@ func (ctx *ChariotContext) doSource(tag string, source *ConfigSource) (ok bool) 
 }
 
 func (ctx *ChariotContext) doTarget(host bool, tag string, target *ConfigTarget) (ok bool) {
-	var buildDir string
+	var buildDir = ctx.cache.Build(tag, host)
 	if host {
 		ctx.cli.Printf("HOST TARGET: %s\n", tag)
-		buildDir = filepath.Join(ctx.cachePath, "host-build", tag)
 	} else {
 		ctx.cli.Printf("TARGET: %s\n", tag)
-		buildDir = filepath.Join(ctx.cachePath, "build", tag)
 	}
 
 	fullTag := tag
@@ -417,15 +430,15 @@ func (ctx *ChariotContext) doTarget(host bool, tag string, target *ConfigTarget)
 
 	var installDir string
 	if host {
-		installDir = filepath.Join(ctx.cachePath, "root") // TODO: build out the host system
+		installDir = ctx.cache.Sysroot() // TODO: build out the host system
 	} else {
-		installDir = filepath.Join(ctx.cachePath, "root")
+		installDir = ctx.cache.Sysroot()
 	}
 
 	verboseWriter, errorWriter := ctx.writers()
-	execContext := ChariotContainer.Use(filepath.Join(ctx.cachePath, "container"), "/chariot/build", []ChariotContainer.Mount{
-		{To: "/chariot/root", From: filepath.Join(ctx.cachePath, "root")},
-		{To: "/chariot/sources", From: filepath.Join(ctx.cachePath, "sources")},
+	execContext := ChariotContainer.Use(ctx.cache.Container(), "/chariot/build", []ChariotContainer.Mount{
+		{To: "/chariot/root", From: ctx.cache.Sysroot()},
+		{To: "/chariot/sources", From: ctx.cache.Sources()},
 		{To: "/chariot/install", From: installDir},
 		{To: "/chariot/build", From: buildDir},
 	}, verboseWriter, errorWriter)
