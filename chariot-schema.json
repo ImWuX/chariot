@@ -3,18 +3,118 @@
     "title": "Chariot",
     "description": "A configuration file for Chariot (https://github.com/imwux/chariot)",
     "type": "object",
+    "additionalProperties": false,
     "required": [
         "project"
     ],
     "properties": {
         "project": {
-            "description": "Project-wide configuration",
             "type": "object",
-            "additionalProperties": true,
+            "additionalProperties": false,
+            "description": "Project-wide configuration",
+            "required": [
+                "name"
+            ],
             "properties": {
                 "name": {
                     "type": "string",
                     "description": "Project name"
+                }
+            }
+        },
+        "source": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "type",
+                    "url"
+                ],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["tar", "local"]
+                    },
+                    "url": {
+                        "type": "string"
+                    },
+                    "dependencies": {
+                        "$ref": "#/definitions/dependencies"
+                    },
+                    "modifiers": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "type"
+                            ],
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["patch", "git-patch", "merge", "exec"]
+                                },
+                                "source": {
+                                    "type": "string",
+                                    "pattern": "^[a-z\\-1-9]+$"
+                                },
+                                "file": {
+                                    "type": "string"
+                                },
+                                "cmd": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "host": {
+            "$ref": "#/definitions/target"
+        },
+        "target": {
+            "$ref": "#/definitions/target"
+        }
+    },
+    "definitions": {
+        "dependencies": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "pattern": "^((?:source|host):)?[a-z\\-1-9]+$"
+            }
+        },
+        "commandArray": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "target": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "configure",
+                    "build",
+                    "install"
+                ],
+                "properties": {
+                    "dependencies": {
+                        "$ref": "#/definitions/dependencies"
+                    },
+                    "configure": {
+                        "$ref": "#/definitions/commandArray"
+                    },
+                    "build": {
+                        "$ref": "#/definitions/commandArray"
+                    },
+                    "install": {
+                        "$ref": "#/definitions/commandArray"
+                    }
                 }
             }
         }
