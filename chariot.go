@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	ChariotCLI "github.com/imwux/chariot/cli"
 )
 
 type ChariotOptions struct {
@@ -18,6 +20,7 @@ type ChariotOptions struct {
 type ChariotContext struct {
 	options *ChariotOptions
 	targets []*ChariotTarget
+	cli     *ChariotCLI.CLI
 }
 
 type ChariotTarget struct {
@@ -32,6 +35,7 @@ type ChariotTarget struct {
 }
 
 func main() {
+	cli := ChariotCLI.CreateCLI(os.Stdout)
 	fmt.Println("Chariot")
 
 	cwd, err := os.Getwd()
@@ -56,10 +60,11 @@ func main() {
 			verbose:        *verbose,
 			threads:        *threads,
 		},
+		cli: cli,
 	}
 
 	cfg := ReadConfig(*config)
-	fmt.Printf("Project: %s\n", cfg.Project.Name)
+	cli.Printf("Project: %s\n", cfg.Project.Name)
 
 	targets, err := cfg.BuildTargets(ctx)
 	if err != nil {
@@ -109,7 +114,7 @@ func (ctx *ChariotContext) do(target *ChariotTarget) error {
 	}
 	target.redo = false
 
-	fmt.Printf("Building >> %s\n", target.tag.ToString())
+	ctx.cli.Printf("Building >> %s\n", target.tag.ToString())
 	return target.do()
 }
 
