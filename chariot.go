@@ -26,7 +26,9 @@ type ChariotTarget struct {
 
 	built   bool
 	touched bool
-	do      bool
+	redo    bool
+
+	do func() error
 }
 
 func main() {
@@ -46,14 +48,25 @@ func main() {
 	// shell := flag.Bool("shell", false, "Open shell into the container")
 	flag.Parse()
 
+	ctx := &ChariotContext{
+		options: &ChariotOptions{
+			cache:          *cache,
+			refetchSources: *refetchSources,
+			resetContainer: *resetContainer,
+			verbose:        *verbose,
+			threads:        *threads,
+		},
+	}
+
 	cfg := ReadConfig(*config)
 	fmt.Printf("Project: %s\n", cfg.Project.Name)
 
-	targets, err := cfg.BuildTargets()
+	targets, err := cfg.BuildTargets(ctx)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	ctx.targets = targets
 
 	doTargets := make([]*ChariotTarget, 0)
 	for _, stag := range flag.Args() {
@@ -66,20 +79,9 @@ func main() {
 			if target.tag != tag {
 				continue
 			}
-			target.do = true
+			target.redo = true
 			doTargets = append(doTargets, target)
 		}
-	}
-
-	ctx := &ChariotContext{
-		options: &ChariotOptions{
-			cache:          *cache,
-			refetchSources: *refetchSources,
-			resetContainer: *resetContainer,
-			verbose:        *verbose,
-			threads:        *threads,
-		},
-		targets: targets,
 	}
 
 	for _, target := range doTargets {
@@ -102,12 +104,31 @@ func (ctx *ChariotContext) do(target *ChariotTarget) error {
 		}
 	}
 
-	if target.built && !target.do {
+	if target.built && !target.redo {
 		return nil
 	}
-	target.do = false
+	target.redo = false
 
-	fmt.Printf(">> %s\n", target.tag.ToString())
+	fmt.Printf("Building >> %s\n", target.tag.ToString())
+	return target.do()
+}
 
-	return nil
+func (ctx *ChariotContext) makeSourceDoer(source *ConfigSource) func() error {
+	return func() error {
+
+		return nil
+	}
+}
+
+func (ctx *ChariotContext) makeHostDoer(host *ConfigHost) func() error {
+	return func() error {
+		return nil
+	}
+}
+
+func (ctx *ChariotContext) makeTargetDoer(target *ConfigTarget) func() error {
+	return func() error {
+
+		return nil
+	}
 }
