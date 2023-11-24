@@ -51,7 +51,7 @@ func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut i
 	proc.Env = []string{
 		"LANG=en_US.UTF-8",
 		"LC_COLLATE=C",
-		"PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/bin/core_perl",
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/bin/core_perl",
 	}
 	proc.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER,
