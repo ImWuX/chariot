@@ -24,6 +24,7 @@ type ChariotTarget struct {
 	tag          Tag
 	dependencies []*ChariotTarget
 
+	built   bool
 	touched bool
 	do      bool
 }
@@ -82,24 +83,31 @@ func main() {
 	}
 
 	for _, target := range doTargets {
-		ctx.do(target)
+		if err := ctx.do(target); err != nil {
+			fmt.Println(err)
+			return
+		}
 	}
 }
 
-func (ctx *ChariotContext) do(target *ChariotTarget) {
+func (ctx *ChariotContext) do(target *ChariotTarget) error {
 	if target.touched {
-		return
+		return nil
 	}
 	target.touched = true
 
 	for _, dep := range target.dependencies {
-		ctx.do(dep)
+		if err := ctx.do(dep); err != nil {
+			return err
+		}
 	}
 
-	if !target.do {
-		return
+	if target.built && !target.do {
+		return nil
 	}
 	target.do = false
 
 	fmt.Printf(">> %s\n", target.tag.ToString())
+
+	return nil
 }
