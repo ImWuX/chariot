@@ -34,10 +34,15 @@ type ConfigTarget struct {
 	Install   []string
 }
 
+type ConfigHost struct {
+	ConfigTarget
+	RuntimeDependencies []string `toml:"runtime-dependencies"`
+}
+
 type Config struct {
 	Project ConfigProject
 	Source  map[string]ConfigSource
-	Host    map[string]ConfigTarget
+	Host    map[string]ConfigHost
 	Target  map[string]ConfigTarget
 }
 
@@ -106,6 +111,11 @@ func (cfg *Config) BuildTargets() ([]*ChariotTarget, error) {
 			if err != nil {
 				return nil, err
 			}
+			runtimeDeps, err := StringsToTags(host.RuntimeDependencies)
+			if err != nil {
+				return nil, err
+			}
+			deps = append(deps, runtimeDeps...)
 		case "":
 			trg := cfg.FindTarget(tag.id)
 			if trg == nil {
@@ -178,7 +188,7 @@ func (cfg *Config) FindTarget(id string) *ConfigTarget {
 	return nil
 }
 
-func (cfg *Config) FindHost(id string) *ConfigTarget {
+func (cfg *Config) FindHost(id string) *ConfigHost {
 	for hostId, host := range cfg.Host {
 		if hostId != id {
 			continue
