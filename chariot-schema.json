@@ -53,7 +53,7 @@
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["patch", "git-patch", "merge", "exec"]
+                                    "enum": ["patch", "merge", "exec"]
                                 },
                                 "source": {
                                     "type": "string",
