@@ -81,7 +81,6 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 
 		var deps []Tag
 		var err error
-		var do func() error
 		switch tag.kind {
 		case "source":
 			source := cfg.FindSource(tag.id)
@@ -102,7 +101,6 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 				}
 				deps = append(deps, modTag)
 			}
-			do = ctx.makeSourceDoer(source)
 		case "host":
 			host := cfg.FindHost(tag.id)
 			if host == nil {
@@ -117,7 +115,6 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 				return nil, err
 			}
 			deps = append(deps, runtimeDeps...)
-			do = ctx.makeHostDoer(host)
 		case "":
 			trg := cfg.FindTarget(tag.id)
 			if trg == nil {
@@ -127,13 +124,11 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 			if err != nil {
 				return nil, err
 			}
-			do = ctx.makeTargetDoer(trg)
 		}
 
 		target = &ChariotTarget{
 			tag:          tag,
 			dependencies: make([]*ChariotTarget, 0),
-			do:           do,
 		}
 		targets = append(targets, target)
 
@@ -144,6 +139,29 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 			}
 			target.dependencies = append(target.dependencies, depTarget)
 		}
+
+		var do func() error
+		switch tag.kind {
+		case "source":
+			source := cfg.FindSource(tag.id)
+			if source == nil {
+				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
+			}
+			do = ctx.makeSourceDoer(tag, source)
+		case "host":
+			host := cfg.FindHost(tag.id)
+			if host == nil {
+				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
+			}
+			do = ctx.makeHostDoer(tag, host)
+		case "":
+			trg := cfg.FindTarget(tag.id)
+			if trg == nil {
+				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
+			}
+			do = ctx.makeTargetDoer(tag, trg)
+		}
+		target.do = do
 
 		return target, nil
 	}
