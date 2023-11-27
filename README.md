@@ -6,4 +6,4 @@ Chariot is a simple bootstraping tool for operating systems.
 - 3 types of targest: Host Targets, Source Targets, and Targets
     - Host Target: A target that is installed onto the host (chariot container)
     - Source Target: A target that fetches source (usually source code) and configures it
-    - Target: A target that is installed into the sysroot
+    - Standard Target: A target that is installed into the sysroot
