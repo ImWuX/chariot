@@ -11,8 +11,12 @@ type ConfigProject struct {
 	Name string
 }
 
-type ConfigSource struct {
+type ConfigTarget struct {
 	Dependencies []string
+}
+
+type ConfigSourceTarget struct {
+	ConfigTarget
 
 	Type string
 	Url  string
@@ -25,24 +29,24 @@ type ConfigSource struct {
 	}
 }
 
-type ConfigTarget struct {
-	Dependencies []string
+type ConfigStandardTarget struct {
+	ConfigTarget
 
 	Configure []string
 	Build     []string
 	Install   []string
 }
 
-type ConfigHost struct {
-	ConfigTarget
+type ConfigHostTarget struct {
+	ConfigStandardTarget
 	RuntimeDependencies []string `toml:"runtime-dependencies"`
 }
 
 type Config struct {
 	Project ConfigProject
-	Source  map[string]ConfigSource
-	Host    map[string]ConfigHost
-	Target  map[string]ConfigTarget
+	Source  map[string]ConfigSourceTarget
+	Host    map[string]ConfigHostTarget
+	Target  map[string]ConfigStandardTarget
 }
 
 func ReadConfig(path string) *Config {
@@ -60,9 +64,13 @@ func ReadConfig(path string) *Config {
 	return &cfg
 }
 
-func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
-	targets := make([]*ChariotTarget, 0)
-	findTarget := func(tag Tag) *ChariotTarget {
+func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
+	var ensureTarget func(tag Tag) (*Target, error)
+	var ensureTargets func(tags []Tag) ([]*Target, error)
+	var findTarget func(tag Tag) *Target
+
+	targets := make([]*Target, 0)
+	findTarget = func(tag Tag) *Target {
 		for _, target := range targets {
 			if target.tag != tag {
 				continue
@@ -72,96 +80,139 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 		return nil
 	}
 
-	var ensureTarget func(tag Tag) (*ChariotTarget, error)
-	ensureTarget = func(tag Tag) (*ChariotTarget, error) {
+	ensureTargets = func(tags []Tag) ([]*Target, error) {
+		eTargets := make([]*Target, 0)
+		for _, tag := range tags {
+			target, err := ensureTarget(tag)
+			if err != nil {
+				return nil, err
+			}
+			eTargets = append(eTargets, target)
+		}
+		return eTargets, nil
+	}
+
+	ensureTarget = func(tag Tag) (*Target, error) {
 		target := findTarget(tag)
 		if target != nil {
 			return target, nil
 		}
 
+		target = &Target{
+			tag: tag,
+		}
+		// any error will stop the build, so we can assume that tag is "valid"
+		targets = append(targets, target)
+
 		var deps []Tag
 		var err error
 		switch tag.kind {
 		case "source":
-			source := cfg.FindSource(tag.id)
-			if source == nil {
+			cfgSource := cfg.FindSource(tag.id)
+			if cfgSource == nil {
 				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
 			}
-			deps, err = StringsToTags(source.Dependencies)
+
+			source := SourceTarget{
+				Target:     target,
+				sourceType: cfgSource.Type,
+				url:        cfgSource.Url,
+				modifiers:  make([]SourceModifier, 0),
+			}
+
+			deps, err = StringsToTags(cfgSource.Dependencies)
 			if err != nil {
 				return nil, err
 			}
-			for _, modififer := range source.Modifiers {
-				if modififer.Source == "" {
+			target.dependencies, err = ensureTargets(deps)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, modifier := range cfgSource.Modifiers {
+				if modifier.Source == "" {
 					continue
 				}
-				modTag, err := CreateTag(modififer.Source, "source")
+				modTag, err := CreateTag(modifier.Source, "source")
 				if err != nil {
 					return nil, err
 				}
-				deps = append(deps, modTag)
+				modTarget, err := ensureTarget(modTag)
+				if err != nil {
+					return nil, err
+				}
+				source.modifiers = append(source.modifiers, SourceModifier{
+					modifierType: modifier.Type,
+					source:       modTarget,
+					file:         modifier.File,
+					cmd:          modifier.Cmd,
+				})
+				source.dependencies = append(source.dependencies, modTarget)
 			}
+
+			target.do = ctx.makeSourceDoer(&source)
 		case "host":
-			host := cfg.FindHost(tag.id)
-			if host == nil {
+			cfgHost := cfg.FindHost(tag.id)
+			if cfgHost == nil {
 				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
 			}
-			deps, err = StringsToTags(host.Dependencies)
+
+			host := &HostTarget{
+				// Host embeds StandardTarget as at the moment they share all properties
+				StandardTarget: StandardTarget{
+					Target:    target,
+					configure: cfgHost.Configure,
+					build:     cfgHost.Build,
+					install:   cfgHost.Install,
+				},
+			}
+
+			deps, err = StringsToTags(cfgHost.Dependencies)
 			if err != nil {
 				return nil, err
 			}
-			runtimeDeps, err := StringsToTags(host.RuntimeDependencies)
+			target.dependencies, err = ensureTargets(deps)
 			if err != nil {
 				return nil, err
 			}
-			deps = append(deps, runtimeDeps...)
+
+			runtimeDeps, err := StringsToTags(cfgHost.RuntimeDependencies)
+			if err != nil {
+				return nil, err
+			}
+			for _, runDep := range runtimeDeps {
+				runTarget, err := ensureTarget(runDep)
+				if err != nil {
+					return nil, err
+				}
+				host.runtimeDependencies = append(host.runtimeDependencies, runTarget)
+			}
+
+			target.do = ctx.makeHostDoer(host)
 		case "":
-			trg := cfg.FindTarget(tag.id)
-			if trg == nil {
+			cfgStandard := cfg.FindTarget(tag.id)
+			if cfgStandard == nil {
 				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
 			}
-			deps, err = StringsToTags(trg.Dependencies)
+
+			std := StandardTarget{
+				Target:    target,
+				configure: cfgStandard.Configure,
+				build:     cfgStandard.Build,
+				install:   cfgStandard.Install,
+			}
+
+			deps, err = StringsToTags(cfgStandard.Dependencies)
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		target = &ChariotTarget{
-			tag:          tag,
-			dependencies: make([]*ChariotTarget, 0),
-		}
-		targets = append(targets, target)
-
-		for _, dep := range deps {
-			depTarget, err := ensureTarget(dep)
+			target.dependencies, err = ensureTargets(deps)
 			if err != nil {
 				return nil, err
 			}
-			target.dependencies = append(target.dependencies, depTarget)
-		}
 
-		var do func() error
-		switch tag.kind {
-		case "source":
-			source := cfg.FindSource(tag.id)
-			if source == nil {
-				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
-			}
-			do = ctx.makeSourceDoer(tag, source)
-		case "host":
-			host := cfg.FindHost(tag.id)
-			if host == nil {
-				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
-			}
-			do = ctx.makeHostDoer(tag, host)
-		case "":
-			trg := cfg.FindTarget(tag.id)
-			if trg == nil {
-				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
-			}
-			do = ctx.makeTargetDoer(tag, trg)
+			target.do = ctx.makeStandardDoer(&std)
 		}
-		target.do = do
 
 		return target, nil
 	}
@@ -200,7 +251,7 @@ func (cfg *Config) BuildTargets(ctx *ChariotContext) ([]*ChariotTarget, error) {
 	return targets, nil
 }
 
-func (cfg *Config) FindTarget(id string) *ConfigTarget {
+func (cfg *Config) FindTarget(id string) *ConfigStandardTarget {
 	for targetId, target := range cfg.Target {
 		if targetId != id {
 			continue
@@ -210,7 +261,7 @@ func (cfg *Config) FindTarget(id string) *ConfigTarget {
 	return nil
 }
 
-func (cfg *Config) FindHost(id string) *ConfigHost {
+func (cfg *Config) FindHost(id string) *ConfigHostTarget {
 	for hostId, host := range cfg.Host {
 		if hostId != id {
 			continue
@@ -220,7 +271,7 @@ func (cfg *Config) FindHost(id string) *ConfigHost {
 	return nil
 }
 
-func (cfg *Config) FindSource(id string) *ConfigSource {
+func (cfg *Config) FindSource(id string) *ConfigSourceTarget {
 	for sourceId, source := range cfg.Source {
 		if sourceId != id {
 			continue

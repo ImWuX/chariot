@@ -16,7 +16,7 @@ import (
 
 const DEFAULT_FILE_PERM = 0755
 
-type ChariotOptions struct {
+type Options struct {
 	cache          string
 	refetchSources bool
 	resetContainer bool
@@ -24,22 +24,52 @@ type ChariotOptions struct {
 	threads        uint
 }
 
-type ChariotContext struct {
-	options *ChariotOptions
-	targets []*ChariotTarget
+type Context struct {
+	options *Options
+	targets []*Target
 	cli     *ChariotCLI.CLI
 	cache   ChariotCache
 }
 
-type ChariotTarget struct {
+type Target struct {
 	tag          Tag
-	dependencies []*ChariotTarget
+	dependencies []*Target
 
 	built   bool
 	touched bool
 	redo    bool
 
 	do func() error
+}
+
+type SourceModifier struct {
+	modifierType string
+	source       *Target
+	file         string
+	cmd          string
+}
+
+type SourceTarget struct {
+	*Target
+
+	sourceType string
+	url        string
+
+	modifiers []SourceModifier
+}
+
+type StandardTarget struct {
+	*Target
+
+	configure []string
+	build     []string
+	install   []string
+}
+
+type HostTarget struct {
+	StandardTarget
+
+	runtimeDependencies []*Target
 }
 
 func main() {
@@ -62,8 +92,8 @@ func main() {
 	// shell := flag.Bool("shell", false, "Open shell into the container")
 	flag.Parse()
 
-	ctx := &ChariotContext{
-		options: &ChariotOptions{
+	ctx := &Context{
+		options: &Options{
 			cache:          *cache,
 			refetchSources: *refetchSources,
 			resetContainer: *resetContainer,
@@ -83,7 +113,7 @@ func main() {
 	}
 	ctx.targets = targets
 
-	doTargets := make([]*ChariotTarget, 0)
+	doTargets := make([]*Target, 0)
 	for _, stag := range flag.Args() {
 		tag, err := StringToTag(stag)
 		if err != nil {
@@ -134,7 +164,7 @@ func main() {
 	}
 }
 
-func (ctx *ChariotContext) wipeContainer() {
+func (ctx *Context) wipeContainer() {
 	ctx.cli.StartSpinner("Deleting container")
 	defer ctx.cli.StopSpinner()
 
@@ -152,7 +182,7 @@ func (ctx *ChariotContext) wipeContainer() {
 	}
 }
 
-func (ctx *ChariotContext) initContainer() {
+func (ctx *Context) initContainer() {
 	ctx.cli.StartSpinner("Initializing container")
 	defer ctx.cli.StopSpinner()
 
@@ -212,7 +242,7 @@ func (ctx *ChariotContext) initContainer() {
 	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran")
 }
 
-func (ctx *ChariotContext) prepContainer(deps []string) error {
+func (ctx *Context) prepContainerRoots(deps []*Target) error {
 	if err := os.RemoveAll(ctx.cache.HostPath()); err != nil {
 		return err
 	}
@@ -227,22 +257,18 @@ func (ctx *ChariotContext) prepContainer(deps []string) error {
 	}
 
 	// var installDeps func(deps []string) error
-	installDeps := func(deps []string) error {
+	installDeps := func(deps []*Target) error {
 		for _, dep := range deps {
-			depTag, err := StringToTag(dep)
-			if err != nil {
-				continue
-			}
-			switch depTag.kind {
+			switch dep.tag.kind {
 			case "source":
 				continue
 			case "host":
 				// TODO: << Recurse thru runtime deps
-				if err := CopyDirectory(filepath.Join(ctx.cache.BuiltPath(depTag.id, true), "usr", "local"), ctx.cache.HostPath()); err != nil {
+				if err := CopyDirectory(filepath.Join(ctx.cache.BuiltPath(dep.tag.id, true), "usr", "local"), ctx.cache.HostPath()); err != nil {
 					return err
 				}
 			case "":
-				if err := CopyDirectory(ctx.cache.BuiltPath(depTag.id, false), ctx.cache.SysrootPath()); err != nil {
+				if err := CopyDirectory(ctx.cache.BuiltPath(dep.tag.id, false), ctx.cache.SysrootPath()); err != nil {
 					return err
 				}
 			}
@@ -252,7 +278,7 @@ func (ctx *ChariotContext) prepContainer(deps []string) error {
 	return installDeps(deps)
 }
 
-func (ctx *ChariotContext) writers() (io.Writer, io.Writer) {
+func (ctx *Context) writers() (io.Writer, io.Writer) {
 	var verboseWriter io.Writer = nil
 	if ctx.options.verbose {
 		verboseWriter = ctx.cli.GetWriter(false, ChariotCLI.LIGHT_GRAY)
@@ -260,7 +286,7 @@ func (ctx *ChariotContext) writers() (io.Writer, io.Writer) {
 	return verboseWriter, ctx.cli.GetWriter(true, ChariotCLI.LIGHT_RED)
 }
 
-func (ctx *ChariotContext) do(target *ChariotTarget) error {
+func (ctx *Context) do(target *Target) error {
 	if target.touched {
 		return nil
 	}
@@ -281,11 +307,11 @@ func (ctx *ChariotContext) do(target *ChariotTarget) error {
 	return target.do()
 }
 
-func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() error {
+func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 	return func() (err error) {
-		sourcePath := ctx.cache.SourcePath(tag.id)
+		sourcePath := ctx.cache.SourcePath(source.tag.id)
 
-		ctx.cli.StartSpinner("Initializing source %s", tag.ToString())
+		ctx.cli.StartSpinner("Initializing source %s", source.tag.ToString())
 		defer ctx.cli.StopSpinner()
 
 		if err := os.MkdirAll(sourcePath, DEFAULT_FILE_PERM); err != nil {
@@ -297,15 +323,15 @@ func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() 
 			}
 		}()
 
-		ctx.cli.SetSpinnerMessage("Fetching source %s", tag.ToString())
+		ctx.cli.SetSpinnerMessage("Fetching source %s", source.tag.ToString())
 		var cmd *exec.Cmd
-		switch source.Type {
+		switch source.sourceType {
 		case "tar":
-			cmd = exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar --strip-components 1 -xvz -C %s", source.Url, sourcePath))
+			cmd = exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar --strip-components 1 -xvz -C %s", source.url, sourcePath))
 		case "local":
-			cmd = exec.Command("cp", "-r", "-T", source.Url, sourcePath)
+			cmd = exec.Command("cp", "-r", "-T", source.url, sourcePath)
 		default:
-			return fmt.Errorf("source %s has an invalid type (%s)", tag.ToString(), source.Type)
+			return fmt.Errorf("source %s has an invalid type (%s)", source.tag.ToString(), source.sourceType)
 		}
 		if err := cmd.Start(); err != nil {
 			return err
@@ -314,24 +340,16 @@ func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() 
 			return err
 		}
 
-		ctx.cli.SetSpinnerMessage("Applying source modifications %s", tag.ToString())
-		for _, modifier := range source.Modifiers {
-			modSourcePath := ctx.cache.SourcePath(modifier.Source)
-			switch modifier.Type {
+		ctx.cli.SetSpinnerMessage("Applying source modifications %s", source.tag.ToString())
+		for _, modifier := range source.modifiers {
+			modSourcePath := ctx.cache.SourcePath(modifier.source.tag.id)
+			switch modifier.modifierType {
 			case "patch":
-				cmd = exec.Command("patch", "-p1", "-i", filepath.Join(modSourcePath, modifier.File))
+				cmd = exec.Command("patch", "-p1", "-i", filepath.Join(modSourcePath, modifier.file))
 			case "merge":
 				cmd = exec.Command("cp", "-r", fmt.Sprintf("%s/.", modSourcePath), ".")
 			case "exec":
-				deps := source.Dependencies
-				for _, modifier := range source.Modifiers {
-					depTag, err := CreateTag(modifier.Source, "source")
-					if err != nil {
-						continue
-					}
-					deps = append(deps, depTag.ToString())
-				}
-				if err := ctx.prepContainer(deps); err != nil {
+				if err := ctx.prepContainerRoots(source.dependencies); err != nil {
 					return err
 				}
 
@@ -343,13 +361,12 @@ func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() 
 					{To: "/chariot/source", From: sourcePath},
 				}, verboseWriter, errorWriter)
 
-				cmd := modifier.Cmd
-				for _, tagStr := range deps {
-					tag, err := StringToTag(tagStr)
-					if err != nil || tag.kind != "source" {
+				cmd := modifier.cmd
+				for _, dep := range source.dependencies {
+					if dep.tag.kind != "source" {
 						continue
 					}
-					cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", tag.id), fmt.Sprintf("/chariot/sources/%s", tag.id))
+					cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
 				}
 				cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
 
@@ -358,7 +375,7 @@ func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() 
 				}
 				continue
 			default:
-				return fmt.Errorf("source %s has an invalid (%s)", tag.ToString(), modifier.Type)
+				return fmt.Errorf("source %s has an invalid (%s)", source.tag.ToString(), modifier.modifierType)
 			}
 			cmd.Dir = sourcePath
 			if err := cmd.Start(); err != nil {
@@ -373,12 +390,12 @@ func (ctx *ChariotContext) makeSourceDoer(tag Tag, source *ConfigSource) func() 
 	}
 }
 
-func (ctx *ChariotContext) makeHostDoer(tag Tag, host *ConfigHost) func() error {
+func (ctx *Context) makeHostDoer(host *HostTarget) func() error {
 	return func() (err error) {
-		buildDir := ctx.cache.BuildPath(tag.id, true)
-		builtDir := ctx.cache.BuiltPath(tag.id, true)
+		buildDir := ctx.cache.BuildPath(host.tag.id, true)
+		builtDir := ctx.cache.BuiltPath(host.tag.id, true)
 
-		ctx.cli.StartSpinner("Preparing %s", tag.ToString())
+		ctx.cli.StartSpinner("Preparing %s", host.tag.ToString())
 		defer ctx.cli.StopSpinner()
 
 		if err := os.MkdirAll(buildDir, DEFAULT_FILE_PERM); err != nil {
@@ -394,7 +411,7 @@ func (ctx *ChariotContext) makeHostDoer(tag Tag, host *ConfigHost) func() error 
 			}
 		}()
 
-		if err := ctx.prepContainer(append(host.Dependencies, host.RuntimeDependencies...)); err != nil {
+		if err := ctx.prepContainerRoots(append(host.dependencies, host.runtimeDependencies...)); err != nil {
 			return err
 		}
 
@@ -408,12 +425,11 @@ func (ctx *ChariotContext) makeHostDoer(tag Tag, host *ConfigHost) func() error 
 		}, verboseWriter, errorWriter)
 
 		processCmd := func(cmd string) string {
-			for _, dep := range host.Dependencies {
-				tag, err := StringToTag(dep)
-				if err != nil || tag.kind != "source" {
+			for _, dep := range host.dependencies {
+				if dep.tag.kind != "source" {
 					continue
 				}
-				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", tag.id), fmt.Sprintf("/chariot/sources/%s", tag.id))
+				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
 			}
 			cmd = strings.ReplaceAll(cmd, "$ROOT", "/chariot/root")
 			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
@@ -422,20 +438,20 @@ func (ctx *ChariotContext) makeHostDoer(tag Tag, host *ConfigHost) func() error 
 			return cmd
 		}
 
-		ctx.cli.SetSpinnerMessage("Configuring %s", tag.ToString())
-		for _, cmd := range host.Configure {
+		ctx.cli.SetSpinnerMessage("Configuring %s", host.tag.ToString())
+		for _, cmd := range host.configure {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
 		}
-		ctx.cli.SetSpinnerMessage("Building %s", tag.ToString())
-		for _, cmd := range host.Build {
+		ctx.cli.SetSpinnerMessage("Building %s", host.tag.ToString())
+		for _, cmd := range host.build {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
 		}
-		ctx.cli.SetSpinnerMessage("Installing %s", tag.ToString())
-		for _, cmd := range host.Install {
+		ctx.cli.SetSpinnerMessage("Installing %s", host.tag.ToString())
+		for _, cmd := range host.install {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
@@ -445,12 +461,12 @@ func (ctx *ChariotContext) makeHostDoer(tag Tag, host *ConfigHost) func() error 
 	}
 }
 
-func (ctx *ChariotContext) makeTargetDoer(tag Tag, target *ConfigTarget) func() error {
+func (ctx *Context) makeStandardDoer(std *StandardTarget) func() error {
 	return func() (err error) {
-		buildDir := ctx.cache.BuildPath(tag.id, false)
-		builtDir := ctx.cache.BuiltPath(tag.id, false)
+		buildDir := ctx.cache.BuildPath(std.tag.id, false)
+		builtDir := ctx.cache.BuiltPath(std.tag.id, false)
 
-		ctx.cli.StartSpinner("Preparing %s", tag.ToString())
+		ctx.cli.StartSpinner("Preparing %s", std.tag.ToString())
 		defer ctx.cli.StopSpinner()
 
 		if err := os.MkdirAll(buildDir, DEFAULT_FILE_PERM); err != nil {
@@ -466,7 +482,7 @@ func (ctx *ChariotContext) makeTargetDoer(tag Tag, target *ConfigTarget) func() 
 			}
 		}()
 
-		if err := ctx.prepContainer(target.Dependencies); err != nil {
+		if err := ctx.prepContainerRoots(std.dependencies); err != nil {
 			return err
 		}
 
@@ -480,12 +496,11 @@ func (ctx *ChariotContext) makeTargetDoer(tag Tag, target *ConfigTarget) func() 
 		}, verboseWriter, errorWriter)
 
 		processCmd := func(cmd string) string {
-			for _, dep := range target.Dependencies {
-				tag, err := StringToTag(dep)
-				if err != nil || tag.kind != "source" {
+			for _, dep := range std.dependencies {
+				if dep.tag.kind != "source" {
 					continue
 				}
-				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", tag.id), fmt.Sprintf("/chariot/sources/%s", tag.id))
+				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
 			}
 			cmd = strings.ReplaceAll(cmd, "$ROOT", "/chariot/root")
 			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
@@ -494,20 +509,20 @@ func (ctx *ChariotContext) makeTargetDoer(tag Tag, target *ConfigTarget) func() 
 			return cmd
 		}
 
-		ctx.cli.SetSpinnerMessage("Configuring %s", tag.ToString())
-		for _, cmd := range target.Configure {
+		ctx.cli.SetSpinnerMessage("Configuring %s", std.tag.ToString())
+		for _, cmd := range std.configure {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
 		}
-		ctx.cli.SetSpinnerMessage("Building %s", tag.ToString())
-		for _, cmd := range target.Build {
+		ctx.cli.SetSpinnerMessage("Building %s", std.tag.ToString())
+		for _, cmd := range std.build {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
 		}
-		ctx.cli.SetSpinnerMessage("Installing %s", tag.ToString())
-		for _, cmd := range target.Install {
+		ctx.cli.SetSpinnerMessage("Installing %s", std.tag.ToString())
+		for _, cmd := range std.install {
 			if err := execContext.Exec(processCmd(cmd)); err != nil {
 				return err
 			}
