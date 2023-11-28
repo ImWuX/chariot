@@ -99,13 +99,12 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 		}
 
 		target = &Target{
-			tag: tag,
+			tag:                 tag,
+			runtimeDependencies: make([]*Target, 0),
 		}
 		// any error will stop the build, so we can assume that tag is "valid"
 		targets = append(targets, target)
 
-		var deps []Tag
-		var err error
 		switch tag.kind {
 		case "source":
 			cfgSource := cfg.FindSource(tag.id)
@@ -120,7 +119,7 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 				modifiers:  make([]SourceModifier, 0),
 			}
 
-			deps, err = StringsToTags(cfgSource.Dependencies)
+			deps, err := StringsToTags(cfgSource.Dependencies)
 			if err != nil {
 				return nil, err
 			}
@@ -130,16 +129,16 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 			}
 
 			for _, modifier := range cfgSource.Modifiers {
-				if modifier.Source == "" {
-					continue
-				}
-				modTag, err := CreateTag(modifier.Source, "source")
-				if err != nil {
-					return nil, err
-				}
-				modTarget, err := ensureTarget(modTag)
-				if err != nil {
-					return nil, err
+				var modTarget *Target = nil
+				if modifier.Source != "" {
+					modTag, err := CreateTag(modifier.Source, "source")
+					if err != nil {
+						return nil, err
+					}
+					modTarget, err = ensureTarget(modTag)
+					if err != nil {
+						return nil, err
+					}
 				}
 				source.modifiers = append(source.modifiers, SourceModifier{
 					modifierType: modifier.Type,
@@ -147,7 +146,9 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 					file:         modifier.File,
 					cmd:          modifier.Cmd,
 				})
-				source.dependencies = append(source.dependencies, modTarget)
+				if modTarget != nil {
+					source.dependencies = append(source.dependencies, modTarget)
+				}
 			}
 
 			target.do = ctx.makeSourceDoer(&source)
@@ -158,16 +159,13 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 			}
 
 			host := &HostTarget{
-				// Host embeds StandardTarget as at the moment they share all properties
-				StandardTarget: StandardTarget{
-					Target:    target,
-					configure: cfgHost.Configure,
-					build:     cfgHost.Build,
-					install:   cfgHost.Install,
-				},
+				Target:    target,
+				configure: cfgHost.Configure,
+				build:     cfgHost.Build,
+				install:   cfgHost.Install,
 			}
 
-			deps, err = StringsToTags(cfgHost.Dependencies)
+			deps, err := StringsToTags(cfgHost.Dependencies)
 			if err != nil {
 				return nil, err
 			}
@@ -202,7 +200,7 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 				install:   cfgStandard.Install,
 			}
 
-			deps, err = StringsToTags(cfgStandard.Dependencies)
+			deps, err := StringsToTags(cfgStandard.Dependencies)
 			if err != nil {
 				return nil, err
 			}

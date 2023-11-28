@@ -32,8 +32,9 @@ type Context struct {
 }
 
 type Target struct {
-	tag          Tag
-	dependencies []*Target
+	tag                 Tag
+	dependencies        []*Target
+	runtimeDependencies []*Target
 
 	built   bool
 	touched bool
@@ -67,9 +68,11 @@ type StandardTarget struct {
 }
 
 type HostTarget struct {
-	StandardTarget
+	*Target
 
-	runtimeDependencies []*Target
+	configure []string
+	build     []string
+	install   []string
 }
 
 func main() {
@@ -89,7 +92,7 @@ func main() {
 	resetContainer := flag.Bool("reset-container", false, "Create a new container")
 	verbose := flag.Bool("verbose", false, "Turn on verbose logging")
 	threads := flag.Uint("threads", 8, "Number of simultaneous threads to use")
-	// shell := flag.Bool("shell", false, "Open shell into the container")
+	// TODO shell := flag.Bool("shell", false, "Open shell into the container")
 	flag.Parse()
 
 	ctx := &Context{
@@ -256,14 +259,28 @@ func (ctx *Context) prepContainerRoots(deps []*Target) error {
 		return err
 	}
 
-	// var installDeps func(deps []string) error
-	installDeps := func(deps []*Target) error {
+	state := make([]*Target, 0)
+	stateInstalled := func(target *Target) bool {
+		for _, stateTarget := range state {
+			if stateTarget == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	var installDeps func(deps []*Target) error
+	installDeps = func(deps []*Target) error {
 		for _, dep := range deps {
+			if stateInstalled(dep) {
+				continue
+			}
+			state = append(state, dep)
+
 			switch dep.tag.kind {
 			case "source":
 				continue
 			case "host":
-				// TODO: << Recurse thru runtime deps
 				if err := CopyDirectory(filepath.Join(ctx.cache.BuiltPath(dep.tag.id, true), "usr", "local"), ctx.cache.HostPath()); err != nil {
 					return err
 				}
@@ -271,6 +288,9 @@ func (ctx *Context) prepContainerRoots(deps []*Target) error {
 				if err := CopyDirectory(ctx.cache.BuiltPath(dep.tag.id, false), ctx.cache.SysrootPath()); err != nil {
 					return err
 				}
+			}
+			if err := installDeps(dep.runtimeDependencies); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -342,11 +362,20 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 
 		ctx.cli.SetSpinnerMessage("Applying source modifications %s", source.tag.ToString())
 		for _, modifier := range source.modifiers {
-			modSourcePath := ctx.cache.SourcePath(modifier.source.tag.id)
+			modSourcePath := ""
+			if modifier.source != nil {
+				modSourcePath = ctx.cache.SourcePath(modifier.source.tag.id)
+			}
 			switch modifier.modifierType {
 			case "patch":
+				if modSourcePath == "" {
+					return fmt.Errorf("patch modifier requires source")
+				}
 				cmd = exec.Command("patch", "-p1", "-i", filepath.Join(modSourcePath, modifier.file))
 			case "merge":
+				if modSourcePath == "" {
+					return fmt.Errorf("merge modifier requires source")
+				}
 				cmd = exec.Command("cp", "-r", fmt.Sprintf("%s/.", modSourcePath), ".")
 			case "exec":
 				if err := ctx.prepContainerRoots(source.dependencies); err != nil {
