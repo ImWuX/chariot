@@ -409,6 +409,7 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 					cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
 				}
 				cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
+				cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
 
 				if err := execCtx.Exec(cmd); err != nil {
 					return err
@@ -475,6 +476,7 @@ func (ctx *Context) makeHostDoer(host *HostTarget) func() error {
 			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
 			cmd = strings.ReplaceAll(cmd, "$INSTALL", "/chariot/install")
 			cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
+			cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
 			return cmd
 		}
 
@@ -546,6 +548,7 @@ func (ctx *Context) makeStandardDoer(std *StandardTarget) func() error {
 			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
 			cmd = strings.ReplaceAll(cmd, "$INSTALL", "/chariot/install")
 			cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
+			cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
 			return cmd
 		}
 
