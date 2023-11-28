@@ -1,9 +1,17 @@
 # Chariot
-Chariot is a simple bootstraping tool for operating systems.
+Chariot is a tool for bootstrapping operating systems.  
+  
+Much inspiration was taken from [xbstrap](https://github.com/managarm/xbstrap) and in most situations [xbstrap](https://github.com/managarm/xbstrap) is probably the more stable and feature-rich option.
 
-### notes to include in future docs
-- Any circular dependency is assumed to be equal, meaning that the target done first is undefined
-- 3 types of targest: Host Targets, Source Targets, and Targets
-    - Host Target: A target that is installed onto the host (chariot container)
-    - Source Target: A target that fetches source (usually source code) and configures it
-    - Standard Target: A target that is installed into the sysroot
+## Usage
+`chariot [options] [targets]`
+
+## Options
+`--config=<file>` overrides the default config file path  
+`--cache=<dir>` overrides the default cache path  
+`--reset-container` resets the container  
+`--verbose` turns on verbose logging  
+`--threads=<num>` controls the number of parallel threads of execution  
+
+## Config
+The config format is due to be documented later when it is more robust. For now refer to the [schema](./chariot-schema.json).

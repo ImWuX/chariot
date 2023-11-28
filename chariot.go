@@ -18,7 +18,6 @@ const DEFAULT_FILE_PERM = 0755
 
 type Options struct {
 	cache          string
-	refetchSources bool
 	resetContainer bool
 	verbose        bool
 	threads        uint
@@ -87,7 +86,6 @@ func main() {
 
 	config := flag.String("config", "chariot.toml", "Path to the config file")
 	cache := flag.String("cache", filepath.Join(cwd, ".chariot-cache"), "Path to the cache directory")
-	refetchSources := flag.Bool("refetch-sources", false, "Refetch all sources")
 	resetContainer := flag.Bool("reset-container", false, "Create a new container")
 	verbose := flag.Bool("verbose", false, "Turn on verbose logging")
 	threads := flag.Uint("threads", 8, "Number of simultaneous threads to use")
@@ -97,7 +95,6 @@ func main() {
 	ctx := &Context{
 		options: &Options{
 			cache:          *cache,
-			refetchSources: *refetchSources,
 			resetContainer: *resetContainer,
 			verbose:        *verbose,
 			threads:        *threads,
