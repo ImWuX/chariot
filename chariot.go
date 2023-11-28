@@ -55,8 +55,7 @@ type SourceTarget struct {
 
 	sourceType string
 	url        string
-
-	modifiers []SourceModifier
+	modifiers  []SourceModifier
 }
 
 type StandardTarget struct {
@@ -156,6 +155,18 @@ func main() {
 	}
 	if !FileExists(ctx.cache.ContainerPath()) {
 		ctx.initContainer()
+	}
+
+	for _, target := range targets {
+		if target.tag.kind == "source" {
+			if FileExists(ctx.cache.SourcePath(target.tag.id)) {
+				target.built = true
+			}
+			continue
+		}
+		if FileExists(ctx.cache.BuiltPath(target.tag.id, target.tag.kind == "host")) {
+			target.built = true
+		}
 	}
 
 	cli.Printf("Project: %s\n", cfg.Project.Name)
