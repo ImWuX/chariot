@@ -89,7 +89,6 @@ func main() {
 	resetContainer := flag.Bool("reset-container", false, "Create a new container")
 	verbose := flag.Bool("verbose", false, "Turn on verbose logging")
 	threads := flag.Uint("threads", 8, "Number of simultaneous threads to use")
-	// TODO shell := flag.Bool("shell", false, "Open shell into the container")
 	flag.Parse()
 
 	ctx := &Context{
@@ -386,7 +385,7 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 				}
 				cmd = exec.Command("cp", "-r", fmt.Sprintf("%s/.", modSourcePath), ".")
 			case "exec":
-				if err := ctx.prepContainerRoots(source.dependencies); err != nil {
+				if err := ctx.prepContainerRoots(append(source.dependencies, source.runtimeDependencies...)); err != nil {
 					return err
 				}
 
@@ -521,7 +520,7 @@ func (ctx *Context) makeStandardDoer(std *StandardTarget) func() error {
 			}
 		}()
 
-		if err := ctx.prepContainerRoots(std.dependencies); err != nil {
+		if err := ctx.prepContainerRoots(append(std.dependencies, std.runtimeDependencies...)); err != nil {
 			return err
 		}
 
