@@ -20,6 +20,7 @@ type Options struct {
 	cache          string
 	resetContainer bool
 	verbose        bool
+	quiet          bool
 	threads        uint
 }
 
@@ -73,6 +74,22 @@ type HostTarget struct {
 	install   []string
 }
 
+type ExecMount struct {
+	name string
+	from string
+	to   string
+}
+
+type ExecVar struct {
+	name  string
+	value string
+}
+
+type ExecContext struct {
+	vars       []ExecVar
+	chariotCtx *ChariotContainer.ExecContext
+}
+
 func main() {
 	ChariotContainer.HostInit()
 
@@ -87,7 +104,8 @@ func main() {
 	config := flag.String("config", "chariot.toml", "Path to the config file")
 	cache := flag.String("cache", filepath.Join(cwd, ".chariot-cache"), "Path to the cache directory")
 	resetContainer := flag.Bool("reset-container", false, "Create a new container")
-	verbose := flag.Bool("verbose", false, "Turn on verbose logging")
+	verbose := flag.Bool("verbose", false, "Turn on stdout logging")
+	quiet := flag.Bool("quiet", false, "Turn off stderr logs")
 	threads := flag.Uint("threads", 8, "Number of simultaneous threads to use")
 	flag.Parse()
 
@@ -96,6 +114,7 @@ func main() {
 			cache:          *cache,
 			resetContainer: *resetContainer,
 			verbose:        *verbose,
+			quiet:          *quiet,
 			threads:        *threads,
 		},
 		cli:   cli,
@@ -172,6 +191,97 @@ func main() {
 			return
 		}
 	}
+}
+
+func (ctx *Context) makeExecContext(cwd string, mounts []ExecMount, containerDeps []*Target) (*ExecContext, error) {
+	if err := os.RemoveAll(ctx.cache.HostPath()); err != nil {
+		return nil, err
+	}
+	if err := os.RemoveAll(ctx.cache.SysrootPath()); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(ctx.cache.HostPath(), DEFAULT_FILE_PERM); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(ctx.cache.SysrootPath(), DEFAULT_FILE_PERM); err != nil {
+		return nil, err
+	}
+
+	state := make([]*Target, 0)
+	stateInstalled := func(target *Target) bool {
+		for _, stateTarget := range state {
+			if stateTarget == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	var installDeps func(deps []*Target) error
+	installDeps = func(deps []*Target) error {
+		for _, dep := range deps {
+			if stateInstalled(dep) {
+				continue
+			}
+			state = append(state, dep)
+
+			switch dep.tag.kind {
+			case "host":
+				if err := CopyDirectory(filepath.Join(ctx.cache.BuiltPath(dep.tag.id, true), "usr", "local"), ctx.cache.HostPath()); err != nil {
+					return err
+				}
+			case "":
+				if err := CopyDirectory(ctx.cache.BuiltPath(dep.tag.id, false), ctx.cache.SysrootPath()); err != nil {
+					return err
+				}
+			}
+			if err := installDeps(dep.runtimeDependencies); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := installDeps(containerDeps); err != nil {
+		return nil, err
+	}
+
+	vars := []ExecVar{
+		{name: "THREADS", value: fmt.Sprint(ctx.options.threads)},
+		{name: "PREFIX", value: "/usr/local"},
+		{name: "ROOT", value: "/chariot/root"},
+	}
+
+	for _, target := range state {
+		if target.tag.kind != "source" {
+			continue
+		}
+		vars = append(vars, ExecVar{name: fmt.Sprintf("SOURCE:%s", target.tag.id), value: fmt.Sprintf("/chariot/sources/%s", target.tag.id)})
+	}
+
+	containerMounts := []ChariotContainer.Mount{
+		{To: "/usr/local", From: ctx.cache.HostPath()},
+		{To: "/chariot/root", From: ctx.cache.SysrootPath()},
+		{To: "/chariot/sources", From: ctx.cache.SourcesPath()},
+	}
+	for _, mount := range mounts {
+		vars = append(vars, ExecVar{name: mount.name, value: mount.to})
+		containerMounts = append(containerMounts, ChariotContainer.Mount{To: mount.to, From: mount.from})
+	}
+
+	verboseWriter, errorWriter := ctx.writers()
+	execCtx := ExecContext{
+		chariotCtx: ChariotContainer.Use(ctx.cache.ContainerPath(), cwd, containerMounts, verboseWriter, errorWriter),
+		vars:       vars,
+	}
+
+	return &execCtx, nil
+}
+
+func (ctx *ExecContext) exec(cmd string) error {
+	for _, v := range ctx.vars {
+		cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$%s", v.name), v.value)
+	}
+	return ctx.chariotCtx.Exec(cmd)
 }
 
 func (ctx *Context) wipeContainer() {
@@ -252,65 +362,15 @@ func (ctx *Context) initContainer() {
 	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran")
 }
 
-func (ctx *Context) prepContainerRoots(deps []*Target) error {
-	if err := os.RemoveAll(ctx.cache.HostPath()); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(ctx.cache.SysrootPath()); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(ctx.cache.HostPath(), DEFAULT_FILE_PERM); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(ctx.cache.SysrootPath(), DEFAULT_FILE_PERM); err != nil {
-		return err
-	}
-
-	state := make([]*Target, 0)
-	stateInstalled := func(target *Target) bool {
-		for _, stateTarget := range state {
-			if stateTarget == target {
-				return true
-			}
-		}
-		return false
-	}
-
-	var installDeps func(deps []*Target) error
-	installDeps = func(deps []*Target) error {
-		for _, dep := range deps {
-			if stateInstalled(dep) {
-				continue
-			}
-			state = append(state, dep)
-
-			switch dep.tag.kind {
-			case "source":
-				continue
-			case "host":
-				if err := CopyDirectory(filepath.Join(ctx.cache.BuiltPath(dep.tag.id, true), "usr", "local"), ctx.cache.HostPath()); err != nil {
-					return err
-				}
-			case "":
-				if err := CopyDirectory(ctx.cache.BuiltPath(dep.tag.id, false), ctx.cache.SysrootPath()); err != nil {
-					return err
-				}
-			}
-			if err := installDeps(dep.runtimeDependencies); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return installDeps(deps)
-}
-
 func (ctx *Context) writers() (io.Writer, io.Writer) {
-	var verboseWriter io.Writer = nil
+	var verboseWriter, errWriter io.Writer = nil, nil
 	if ctx.options.verbose {
 		verboseWriter = ctx.cli.GetWriter(false, ChariotCLI.LIGHT_GRAY)
 	}
-	return verboseWriter, ctx.cli.GetWriter(true, ChariotCLI.LIGHT_RED)
+	if !ctx.options.quiet {
+		errWriter = ctx.cli.GetWriter(true, ChariotCLI.LIGHT_RED)
+	}
+	return verboseWriter, errWriter
 }
 
 func (ctx *Context) do(target *Target) error {
@@ -385,29 +445,14 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 				}
 				cmd = exec.Command("cp", "-r", fmt.Sprintf("%s/.", modSourcePath), ".")
 			case "exec":
-				if err := ctx.prepContainerRoots(append(source.dependencies, source.runtimeDependencies...)); err != nil {
+				execContext, err := ctx.makeExecContext("/chariot/source", []ExecMount{
+					{name: "SOURCE", to: "/chariot/source", from: sourcePath},
+				}, append(source.dependencies, source.runtimeDependencies...))
+				if err != nil {
 					return err
 				}
 
-				verboseWriter, errorWriter := ctx.writers()
-				execCtx := ChariotContainer.Use(ctx.cache.ContainerPath(), "/chariot/source", []ChariotContainer.Mount{
-					{To: "/usr/local", From: ctx.cache.HostPath()},
-					{To: "/chariot/root", From: ctx.cache.SysrootPath()},
-					{To: "/chariot/sources", From: ctx.cache.SourcesPath()},
-					{To: "/chariot/source", From: sourcePath},
-				}, verboseWriter, errorWriter)
-
-				cmd := modifier.cmd
-				for _, dep := range source.dependencies {
-					if dep.tag.kind != "source" {
-						continue
-					}
-					cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
-				}
-				cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
-				cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
-
-				if err := execCtx.Exec(cmd); err != nil {
+				if err := execContext.exec(modifier.cmd); err != nil {
 					return err
 				}
 				continue
@@ -448,49 +493,29 @@ func (ctx *Context) makeHostDoer(host *HostTarget) func() error {
 			}
 		}()
 
-		if err := ctx.prepContainerRoots(append(host.dependencies, host.runtimeDependencies...)); err != nil {
+		execContext, err := ctx.makeExecContext("/chariot/build", []ExecMount{
+			{name: "BUILD", to: "/chariot/build", from: buildDir},
+			{name: "INSTALL", to: "/chariot/install", from: builtDir},
+		}, append(host.dependencies, host.runtimeDependencies...))
+		if err != nil {
 			return err
-		}
-
-		verboseWriter, errorWriter := ctx.writers()
-		execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/chariot/build", []ChariotContainer.Mount{
-			{To: "/usr/local", From: ctx.cache.HostPath()},
-			{To: "/chariot/root", From: ctx.cache.SysrootPath()},
-			{To: "/chariot/build", From: buildDir},
-			{To: "/chariot/install", From: builtDir},
-			{To: "/chariot/sources", From: ctx.cache.SourcesPath()},
-		}, verboseWriter, errorWriter)
-
-		processCmd := func(cmd string) string {
-			for _, dep := range host.dependencies {
-				if dep.tag.kind != "source" {
-					continue
-				}
-				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
-			}
-			cmd = strings.ReplaceAll(cmd, "$ROOT", "/chariot/root")
-			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
-			cmd = strings.ReplaceAll(cmd, "$INSTALL", "/chariot/install")
-			cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
-			cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
-			return cmd
 		}
 
 		ctx.cli.SetSpinnerMessage("Configuring %s", host.tag.ToString())
 		for _, cmd := range host.configure {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
 		ctx.cli.SetSpinnerMessage("Building %s", host.tag.ToString())
 		for _, cmd := range host.build {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
 		ctx.cli.SetSpinnerMessage("Installing %s", host.tag.ToString())
 		for _, cmd := range host.install {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
@@ -520,49 +545,29 @@ func (ctx *Context) makeStandardDoer(std *StandardTarget) func() error {
 			}
 		}()
 
-		if err := ctx.prepContainerRoots(append(std.dependencies, std.runtimeDependencies...)); err != nil {
+		execContext, err := ctx.makeExecContext("/chariot/build", []ExecMount{
+			{name: "BUILD", to: "/chariot/build", from: buildDir},
+			{name: "INSTALL", to: "/chariot/install", from: builtDir},
+		}, append(std.dependencies, std.runtimeDependencies...))
+		if err != nil {
 			return err
-		}
-
-		verboseWriter, errorWriter := ctx.writers()
-		execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/chariot/build", []ChariotContainer.Mount{
-			{To: "/usr/local", From: ctx.cache.HostPath()},
-			{To: "/chariot/root", From: ctx.cache.SysrootPath()},
-			{To: "/chariot/build", From: buildDir},
-			{To: "/chariot/install", From: builtDir},
-			{To: "/chariot/sources", From: ctx.cache.SourcesPath()},
-		}, verboseWriter, errorWriter)
-
-		processCmd := func(cmd string) string {
-			for _, dep := range std.dependencies {
-				if dep.tag.kind != "source" {
-					continue
-				}
-				cmd = strings.ReplaceAll(cmd, fmt.Sprintf("$SOURCE:%s", dep.tag.id), fmt.Sprintf("/chariot/sources/%s", dep.tag.id))
-			}
-			cmd = strings.ReplaceAll(cmd, "$ROOT", "/chariot/root")
-			cmd = strings.ReplaceAll(cmd, "$BUILD", "/chariot/build")
-			cmd = strings.ReplaceAll(cmd, "$INSTALL", "/chariot/install")
-			cmd = strings.ReplaceAll(cmd, "$THREADS", fmt.Sprint(ctx.options.threads))
-			cmd = strings.ReplaceAll(cmd, "$PREFIX", "/usr/local")
-			return cmd
 		}
 
 		ctx.cli.SetSpinnerMessage("Configuring %s", std.tag.ToString())
 		for _, cmd := range std.configure {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
 		ctx.cli.SetSpinnerMessage("Building %s", std.tag.ToString())
 		for _, cmd := range std.build {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
 		ctx.cli.SetSpinnerMessage("Installing %s", std.tag.ToString())
 		for _, cmd := range std.install {
-			if err := execContext.Exec(processCmd(cmd)); err != nil {
+			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
