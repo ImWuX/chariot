@@ -58,7 +58,7 @@ type SourceTarget struct {
 	modifiers  []SourceModifier
 }
 
-type StandardTarget struct {
+type CommonTarget struct {
 	*Target
 
 	configure []string
@@ -66,13 +66,8 @@ type StandardTarget struct {
 	install   []string
 }
 
-type HostTarget struct {
-	*Target
-
-	configure []string
-	build     []string
-	install   []string
-}
+type StandardTarget CommonTarget
+type HostTarget CommonTarget
 
 type ExecMount struct {
 	name string
@@ -472,12 +467,12 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 	}
 }
 
-func (ctx *Context) makeHostDoer(host *HostTarget) func() error {
+func (ctx *Context) makeCommonTarget(target *CommonTarget, host bool) func() error {
 	return func() (err error) {
-		buildDir := ctx.cache.BuildPath(host.tag.id, true)
-		builtDir := ctx.cache.BuiltPath(host.tag.id, true)
+		buildDir := ctx.cache.BuildPath(target.tag.id, host)
+		builtDir := ctx.cache.BuiltPath(target.tag.id, host)
 
-		ctx.cli.StartSpinner("Preparing %s", host.tag.ToString())
+		ctx.cli.StartSpinner("Preparing %s", target.tag.ToString())
 		defer ctx.cli.StopSpinner()
 
 		if err := os.MkdirAll(buildDir, DEFAULT_FILE_PERM); err != nil {
@@ -496,77 +491,27 @@ func (ctx *Context) makeHostDoer(host *HostTarget) func() error {
 		execContext, err := ctx.makeExecContext("/chariot/build", []ExecMount{
 			{name: "BUILD", to: "/chariot/build", from: buildDir},
 			{name: "INSTALL", to: "/chariot/install", from: builtDir},
-		}, append(host.dependencies, host.runtimeDependencies...))
+		}, append(target.dependencies, target.runtimeDependencies...))
 		if err != nil {
 			return err
 		}
 
-		ctx.cli.SetSpinnerMessage("Configuring %s", host.tag.ToString())
-		for _, cmd := range host.configure {
-			if err := execContext.exec(cmd); err != nil {
-				return err
-			}
-		}
-		ctx.cli.SetSpinnerMessage("Building %s", host.tag.ToString())
-		for _, cmd := range host.build {
-			if err := execContext.exec(cmd); err != nil {
-				return err
-			}
-		}
-		ctx.cli.SetSpinnerMessage("Installing %s", host.tag.ToString())
-		for _, cmd := range host.install {
+		ctx.cli.SetSpinnerMessage("Configuring %s", target.tag.ToString())
+		for _, cmd := range target.configure {
 			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
 
-		return nil
-	}
-}
-
-func (ctx *Context) makeStandardDoer(std *StandardTarget) func() error {
-	return func() (err error) {
-		buildDir := ctx.cache.BuildPath(std.tag.id, false)
-		builtDir := ctx.cache.BuiltPath(std.tag.id, false)
-
-		ctx.cli.StartSpinner("Preparing %s", std.tag.ToString())
-		defer ctx.cli.StopSpinner()
-
-		if err := os.MkdirAll(buildDir, DEFAULT_FILE_PERM); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(builtDir, DEFAULT_FILE_PERM); err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				os.RemoveAll(buildDir)
-				os.RemoveAll(builtDir)
-			}
-		}()
-
-		execContext, err := ctx.makeExecContext("/chariot/build", []ExecMount{
-			{name: "BUILD", to: "/chariot/build", from: buildDir},
-			{name: "INSTALL", to: "/chariot/install", from: builtDir},
-		}, append(std.dependencies, std.runtimeDependencies...))
-		if err != nil {
-			return err
-		}
-
-		ctx.cli.SetSpinnerMessage("Configuring %s", std.tag.ToString())
-		for _, cmd := range std.configure {
+		ctx.cli.SetSpinnerMessage("Building %s", target.tag.ToString())
+		for _, cmd := range target.build {
 			if err := execContext.exec(cmd); err != nil {
 				return err
 			}
 		}
-		ctx.cli.SetSpinnerMessage("Building %s", std.tag.ToString())
-		for _, cmd := range std.build {
-			if err := execContext.exec(cmd); err != nil {
-				return err
-			}
-		}
-		ctx.cli.SetSpinnerMessage("Installing %s", std.tag.ToString())
-		for _, cmd := range std.install {
+
+		ctx.cli.SetSpinnerMessage("Installing %s", target.tag.ToString())
+		for _, cmd := range target.install {
 			if err := execContext.exec(cmd); err != nil {
 				return err
 			}

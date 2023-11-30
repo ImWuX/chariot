@@ -186,14 +186,14 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 				host.runtimeDependencies = append(host.runtimeDependencies, runTarget)
 			}
 
-			target.do = ctx.makeHostDoer(host)
+			target.do = ctx.makeCommonTarget((*CommonTarget)(host), true)
 		case "":
 			cfgStandard := cfg.FindTarget(tag.id)
 			if cfgStandard == nil {
 				return nil, fmt.Errorf("undefined target (%s)", tag.ToString())
 			}
 
-			std := StandardTarget{
+			std := &StandardTarget{
 				Target:    target,
 				configure: cfgStandard.Configure,
 				build:     cfgStandard.Build,
@@ -209,7 +209,7 @@ func (cfg *Config) BuildTargets(ctx *Context) ([]*Target, error) {
 				return nil, err
 			}
 
-			target.do = ctx.makeStandardDoer(&std)
+			target.do = ctx.makeCommonTarget((*CommonTarget)(std), false)
 		}
 
 		return target, nil
