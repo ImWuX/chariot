@@ -3,7 +3,7 @@ package chariot_cli
 import (
 	"fmt"
 	"io"
-	"os"
+	"sync"
 	"time"
 
 	"github.com/briandowns/spinner"
@@ -29,8 +29,9 @@ const (
 )
 
 type CLI struct {
-	buf []byte
-	out *io.Writer
+	lock sync.Mutex
+	buf  []byte
+	out  *io.Writer
 
 	doSpin  bool
 	spinner *spinner.Spinner
@@ -51,13 +52,13 @@ func CreateCLI(out io.Writer) *CLI {
 		buf:     make([]byte, 0),
 		out:     &out,
 		doSpin:  false,
-		spinner: spinner.New(spinner.CharSets[14], 100*time.Millisecond),
+		spinner: spinner.New(spinner.CharSets[14], 100*time.Millisecond, spinner.WithColor("yellow"), spinner.WithWriter(out)),
 	}
-	cli.spinner.Color("yellow")
 	return cli
 }
 
 func (cli *CLI) write(buf []byte, color string) (int, error) {
+	cli.lock.Lock()
 	cli.buf = append(cli.buf, buf...)
 	last := -1
 	for i, b := range cli.buf {
@@ -71,17 +72,18 @@ func (cli *CLI) write(buf []byte, color string) (int, error) {
 			cli.spinner.Stop()
 		}
 		if color != "" {
-			os.Stdout.Write([]byte(color))
+			(*cli.out).Write([]byte(color))
 		}
-		os.Stdout.Write(cli.buf[:last+1])
+		(*cli.out).Write(cli.buf[:last+1])
 		cli.buf = cli.buf[last+1:]
 		if color != "" {
-			os.Stdout.Write([]byte(RESET))
+			(*cli.out).Write([]byte(RESET))
 		}
 		if cli.doSpin {
 			cli.spinner.Start()
 		}
 	}
+	cli.lock.Unlock()
 	return len(buf), nil
 }
 
