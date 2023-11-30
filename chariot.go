@@ -268,7 +268,6 @@ func (ctx *Context) makeExecContext(cwd string, mounts []ExecMount, containerDep
 		chariotCtx: ChariotContainer.Use(ctx.cache.ContainerPath(), cwd, containerMounts, verboseWriter, errorWriter),
 		vars:       vars,
 	}
-
 	return &execCtx, nil
 }
 
