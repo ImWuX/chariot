@@ -342,7 +342,8 @@ func (ctx *Context) initContainer() {
 	}
 
 	ctx.cli.SetSpinnerMessage("Running initialization commands")
-	execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/root", []ChariotContainer.Mount{}, nil, nil)
+    verboseWriter, errorWriter := ctx.writers()
+	execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/root", []ChariotContainer.Mount{}, verboseWriter, errorWriter)
 	execContext.Exec("echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.leaseweb.net/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
@@ -373,7 +374,7 @@ func (ctx *Context) do(target *Target) error {
 	}
 	target.touched = true
 
-	for _, dep := range target.dependencies {
+	for _, dep := range append(target.dependencies, target.runtimeDependencies...) {
 		if err := ctx.do(dep); err != nil {
 			return err
 		}
