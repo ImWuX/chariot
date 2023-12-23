@@ -118,6 +118,28 @@ func main() {
 
 	cfg := ReadConfig(*config)
 
+	if !FileExists(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")) {
+		cli.StartSpinner("Downloading arch linux image")
+		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
+		cmd.Dir = ctx.cache.Path()
+		if err := cmd.Start(); err != nil {
+			cli.Println(err)
+			return
+		}
+		if err := cmd.Wait(); err != nil {
+			cli.Println(err)
+			return
+		}
+		cli.StopSpinner()
+	}
+	if ctx.options.resetContainer {
+		ctx.wipeContainer()
+	}
+	if !FileExists(ctx.cache.ContainerPath()) {
+		ctx.initContainer()
+	}
+
+	cli.Printf("Project: %s\n", cfg.Project.Name)
 	targets, err := cfg.BuildTargets(ctx)
 	if err != nil {
 		cli.Println(err)
@@ -132,39 +154,24 @@ func main() {
 			cli.Println(err)
 			return
 		}
+		found := false
 		for _, target := range targets {
 			if target.tag != tag {
 				continue
 			}
 			target.redo = true
 			doTargets = append(doTargets, target)
+			found = true
+		}
+		if !found {
+			cli.Printf("Unknown target %s\n", stag)
+			return
 		}
 	}
 
 	if err := ctx.cache.Init(); err != nil {
 		cli.Println(err)
 		return
-	}
-
-	if !FileExists(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")) {
-		ctx.cli.StartSpinner("Downloading arch linux image")
-		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
-		cmd.Dir = ctx.cache.Path()
-		if err := cmd.Start(); err != nil {
-			cli.Println(err)
-			return
-		}
-		if err := cmd.Wait(); err != nil {
-			cli.Println(err)
-			return
-		}
-		ctx.cli.StopSpinner()
-	}
-	if ctx.options.resetContainer {
-		ctx.wipeContainer()
-	}
-	if !FileExists(ctx.cache.ContainerPath()) {
-		ctx.initContainer()
 	}
 
 	for _, target := range targets {
@@ -179,7 +186,6 @@ func main() {
 		}
 	}
 
-	cli.Printf("Project: %s\n", cfg.Project.Name)
 	for _, target := range doTargets {
 		if err := ctx.do(target); err != nil {
 			cli.Println(err)
