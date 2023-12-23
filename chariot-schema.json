@@ -34,7 +34,7 @@
                 "properties": {
                     "type": {
                         "type": "string",
-                        "enum": ["tar", "local"]
+                        "enum": ["tar.gz", "tar.xz", "local"]
                     },
                     "url": {
                         "type": "string"
