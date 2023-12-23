@@ -342,8 +342,8 @@ func (ctx *Context) initContainer() {
 	}
 
 	ctx.cli.SetSpinnerMessage("Running initialization commands")
-    verboseWriter, errorWriter := ctx.writers()
-	execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/root", []ChariotContainer.Mount{}, verboseWriter, errorWriter)
+    verboseWriter, _ := ctx.writers()
+	execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/root", []ChariotContainer.Mount{}, verboseWriter, verboseWriter)
 	execContext.Exec("echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.leaseweb.net/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
@@ -354,7 +354,7 @@ func (ctx *Context) initContainer() {
 	execContext.Exec("pacman --noconfirm -Sy archlinux-keyring")
 	execContext.Exec("pacman --noconfirm -S pacman pacman-mirrorlist")
 	execContext.Exec("pacman --noconfirm -Syu")
-	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran")
+	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran nasm")
 }
 
 func (ctx *Context) writers() (io.Writer, io.Writer) {
@@ -393,6 +393,12 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 	return func() (err error) {
 		sourcePath := ctx.cache.SourcePath(source.tag.id)
 
+		if FileExists(sourcePath) {
+			if err := os.RemoveAll(sourcePath); err != nil {
+				return err
+			}
+		}
+
 		ctx.cli.StartSpinner("Initializing source %s", source.tag.ToString())
 		defer ctx.cli.StopSpinner()
 
@@ -408,8 +414,10 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 		ctx.cli.SetSpinnerMessage("Fetching source %s", source.tag.ToString())
 		var cmd *exec.Cmd
 		switch source.sourceType {
-		case "tar":
+		case "tar.gz":
 			cmd = exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar --strip-components 1 -xvz -C %s", source.url, sourcePath))
+		case "tar.xz":
+			cmd = exec.Command("sh", "-c", fmt.Sprintf("wget -qO- %s | tar --strip-components 1 -xvJ -C %s", source.url, sourcePath))
 		case "local":
 			cmd = exec.Command("cp", "-r", "-T", source.url, sourcePath)
 		default:
@@ -471,6 +479,17 @@ func (ctx *Context) makeCommonTarget(target *CommonTarget, host bool) func() err
 	return func() (err error) {
 		buildDir := ctx.cache.BuildPath(target.tag.id, host)
 		builtDir := ctx.cache.BuiltPath(target.tag.id, host)
+
+		if FileExists(buildDir) {
+			if err := os.RemoveAll(buildDir); err != nil {
+				return err
+			}
+		}
+		if FileExists(builtDir) {
+			if err := os.RemoveAll(builtDir); err != nil {
+				return err
+			}
+		}
 
 		ctx.cli.StartSpinner("Preparing %s", target.tag.ToString())
 		defer ctx.cli.StopSpinner()
