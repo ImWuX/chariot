@@ -354,7 +354,7 @@ func (ctx *Context) initContainer() {
 	execContext.Exec("pacman --noconfirm -Sy archlinux-keyring")
 	execContext.Exec("pacman --noconfirm -S pacman pacman-mirrorlist")
 	execContext.Exec("pacman --noconfirm -Syu")
-	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran nasm")
+	execContext.Exec("pacman --noconfirm -S ninja meson git wget perl diffutils inetutils python help2man bison flex gettext libtool m4 make patch texinfo which binutils gcc gcc-fortran nasm rsync")
 }
 
 func (ctx *Context) writers() (io.Writer, io.Writer) {
