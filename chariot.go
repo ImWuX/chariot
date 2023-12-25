@@ -118,6 +118,12 @@ func main() {
 
 	cfg := ReadConfig(*config)
 
+	if !FileExists(ctx.cache.Path()) {
+		if err := os.MkdirAll(ctx.cache.Path(), DEFAULT_FILE_PERM); err != nil {
+			panic(err)
+		}
+	}
+
 	if !FileExists(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")) {
 		cli.StartSpinner("Downloading arch linux image")
 		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
