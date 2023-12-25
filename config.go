@@ -50,13 +50,12 @@ type Config struct {
 }
 
 func ReadConfig(path string) *Config {
-	var cfg Config
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
 	}
 
+	var cfg Config
 	if _, err = toml.Decode(string(data), &cfg); err != nil {
 		panic(err)
 	}
