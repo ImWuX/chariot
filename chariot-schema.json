@@ -77,8 +77,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                    "configure",
-                    "build",
                     "install"
                 ],
                 "properties": {
@@ -106,8 +104,6 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                    "configure",
-                    "build",
                     "install"
                 ],
                 "properties": {
