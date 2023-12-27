@@ -453,6 +453,9 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 				if modSourcePath == "" {
 					return fmt.Errorf("patch modifier requires source")
 				}
+				if !FileExists(filepath.Join(modSourcePath, modifier.file)) {
+					return fmt.Errorf("patch %s does not exist in source %s", modifier.file, modifier.source.tag.id)
+				}
 				cmd = exec.Command("patch", "-p1", "-i", filepath.Join(modSourcePath, modifier.file))
 			case "merge":
 				if modSourcePath == "" {
