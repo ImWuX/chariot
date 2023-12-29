@@ -1,7 +1,6 @@
 package chariot_container
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -63,10 +62,7 @@ func Exec(containerPath string, cmd string, cwd string, mounts []Mount, stdOut i
 		},
 	}
 
-	if err := proc.Start(); err != nil {
-		return err
-	}
-	return proc.Wait()
+	return proc.Run()
 }
 
 func Use(containerPath string, cwd string, mounts []Mount, stdOut io.Writer, stdErr io.Writer) *ExecContext {
@@ -97,10 +93,8 @@ func containerEntry() {
 	cmd.Stdin = os.Stdin
 	cmd.Dir = cwd
 
-	if err := cmd.Start(); err != nil {
-		fmt.Printf("exec error: %s\n", err)
-	} else {
-		cmd.Wait()
+	if err := cmd.Run(); err != nil {
+		os.Exit(1)
 	}
 }
 
