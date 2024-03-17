@@ -354,7 +354,7 @@ func (ctx *Context) initContainer() {
 	}
 
 	ctx.cli.SetSpinnerMessage("Running initialization commands")
-    verboseWriter, _ := ctx.writers()
+	verboseWriter, _ := ctx.writers()
 	execContext := ChariotContainer.Use(ctx.cache.ContainerPath(), "/root", []ChariotContainer.Mount{}, verboseWriter, verboseWriter)
 	execContext.Exec("echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist")
 	execContext.Exec("echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist")
@@ -423,7 +423,7 @@ func (ctx *Context) makeSourceDoer(source *SourceTarget) func() error {
 			}
 		}()
 
-		ctx.cli.SetSpinnerMessage("Fetching source %s", source.tag.ToString())
+		ctx.cli.SetSpinnerMessage("Fetching %s", source.tag.ToString())
 		var cmd *exec.Cmd
 		switch source.sourceType {
 		case "tar.gz":
