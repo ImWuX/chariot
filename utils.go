@@ -131,7 +131,7 @@ func CreateTag(id string, kind string) (Tag, error) {
 	if tag.kind != "" && tag.kind != "host" && tag.kind != "source" {
 		return Tag{}, fmt.Errorf("invalid tag kind (%s)", tag.kind)
 	}
-	if r, _ := regexp.Compile(`^[a-z\-1-9]+$`); !r.Match([]byte(tag.id)) {
+	if r, _ := regexp.Compile(`^[a-z\-\_1-9]+$`); !r.Match([]byte(tag.id)) {
 		return Tag{}, fmt.Errorf("tag id (%s) contains invalid characters", tag.id)
 	}
 	return tag, nil
