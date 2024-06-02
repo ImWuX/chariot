@@ -124,9 +124,9 @@ func main() {
 		}
 	}
 
-	if !FileExists(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")) {
+	if !FileExists(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.zst")) {
 		cli.StartSpinner("Downloading arch linux image")
-		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
+		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.zst")
 		cmd.Dir = ctx.cache.Path()
 		if err := cmd.Start(); err != nil {
 			cli.Println(err)
@@ -312,9 +312,9 @@ func (ctx *Context) initContainer() {
 	ctx.cli.StartSpinner("Initializing container")
 	defer ctx.cli.StopSpinner()
 
-	if _, err := os.Stat(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.gz")); err != nil {
+	if _, err := os.Stat(filepath.Join(ctx.cache.Path(), "archlinux-bootstrap-x86_64.tar.zst")); err != nil {
 		ctx.cli.SetSpinnerMessage("Downloading arch linux image")
-		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz")
+		cmd := exec.Command("wget", "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.zst")
 		cmd.Dir = ctx.cache.Path()
 		if err := cmd.Start(); err != nil {
 			panic(err)
@@ -325,7 +325,7 @@ func (ctx *Context) initContainer() {
 	}
 
 	ctx.cli.SetSpinnerMessage("Extracting arch linux image")
-	cmd := exec.Command("bsdtar", "-zxf", "archlinux-bootstrap-x86_64.tar.gz")
+	cmd := exec.Command("tar", "--zstd", "-xvf", "archlinux-bootstrap-x86_64.tar.zst")
 	cmd.Dir = ctx.cache.Path()
 	if err := cmd.Start(); err != nil {
 		panic(err)
