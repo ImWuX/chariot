@@ -185,3 +185,7 @@ int container_context_exec(container_context_t *context, int arg_count, const ch
         args
     );
 }
+
+int container_context_exec_shell(container_context_t *context, const char *arg) {
+    return container_context_exec(context, 3, (const char *[]) { "bash", "-c", arg });
+}

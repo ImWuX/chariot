@@ -30,3 +30,4 @@ int container_exec(
 );
 
 int container_context_exec(container_context_t *context, int arg_count, const char **args);
+int container_context_exec_shell(container_context_t *context, const char *arg);
