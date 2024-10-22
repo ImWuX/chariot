@@ -231,10 +231,6 @@ static recipe_t *parse_recipe(parser_data_t *parser) {
                     break;
                 }
             }
-            if(recipe->host_target.source.name == NULL) {
-                printf("missing source\n");
-                exit(EXIT_FAILURE);
-            }
             break;
         default:
             printf("unsupported namespace\n");
@@ -291,7 +287,7 @@ config_t *config_read(const char *path) {
             }
             recipes[i]->dependencies[j].resolved = recipe;
         }
-        if(recipes[i]->namespace == RECIPE_NAMESPACE_HOST || recipes[i]->namespace == RECIPE_NAMESPACE_TARGET) {
+        if((recipes[i]->namespace == RECIPE_NAMESPACE_HOST || recipes[i]->namespace == RECIPE_NAMESPACE_TARGET) && recipes[i]->host_target.source.name != NULL) {
             recipe_t *recipe = find_recipe(recipes, recipe_count, RECIPE_NAMESPACE_SOURCE, recipes[i]->host_target.source.name);
             if(recipe == NULL) {
                 printf("couldnt find source `%s`\n", recipes[i]->host_target.source.name);
