@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <fts.h>
+#include <getopt.h>
 
 #define PATH_CACHE ".chariot-cache"
 
@@ -330,31 +330,77 @@ terminate:
     return -1;
 }
 
-int main(int argc, char **vargs) {
-    // container_context_exec_shell(&(container_context_t) { .rootfs = { .path = PATH_CACHE "/rootfs", .read_only = false }, .cwd = "/root", .gid = 0, .uid = 0, .environment = { .variable_count = 0, .variables = NULL }, .mounts = NULL, .mount_count = 0 }, vargs[1]);
-    // return 0;
+int main(int argc, char **argv) {
+    char *config_path = "./config.chariot";
+    char *cmd = NULL;
+    bool verbose = false;
+
+    static struct option lopts[] = {
+        { .name = "config", .has_arg = required_argument, .val = 1000 },
+        { .name = "verbose", .has_arg = no_argument, .val = 1001 },
+        { .name = "exec", .has_arg = required_argument, .val = 1002 },
+        {}
+    };
+
+    int opt;
+    while((opt = getopt_long(argc, argv, "", lopts, NULL)) != -1) {
+        switch(opt) {
+            case 1000: config_path = optarg; break;
+            case 1001: verbose = true; break;
+            case 1002: cmd = optarg; break;
+        }
+    }
+
+    if(cmd != NULL) {
+        container_context_t *cc = container_context_make(PATH_CACHE "/rootfs", "/root");
+        container_context_set_verbosity(cc, true);
+        container_context_exec_shell(cc, cmd);
+        container_context_free(cc);
+        return 0;
+    }
+
+    if(lib_path_exists(config_path) != 0) {
+        LIB_ERROR(0, "config not found");
+        return EXIT_FAILURE;
+    }
+    config_t *config = config_read(config_path);
 
     // int r = lib_path_delete(PATH_CACHE "/rootfs");
-    if(lib_path_exists(PATH_CACHE "/rootfs") != 0) {
-        int r = install_rootfs(PATH_CACHE "/rootfs");
+    if(lib_path_exists(PATH_CACHE "/rootfs") != 0 && install_rootfs(PATH_CACHE "/rootfs") < 0) {
+        LIB_ERROR(0, "failed to install rootfs");
+        return EXIT_FAILURE;
     }
 
-    config_t *config = config_read("config.chariot");
+    recipe_list_t forced_recipes = RECIPE_LIST_INIT;
+    for(int i = optind; i < argc; i++) {
+        recipe_namespace_t namespace;
+        char *identifier;
+        if(strncmp(argv[i], "source/", 7) == 0) {
+            namespace = RECIPE_NAMESPACE_SOURCE;
+            identifier = &argv[i][7];
+        } else if(strncmp(argv[i], "host/", 5) == 0) {
+            namespace = RECIPE_NAMESPACE_HOST;
+            identifier = &argv[i][5];
+        } else if(strncmp(argv[i], "target/", 7) == 0) {
+            namespace = RECIPE_NAMESPACE_TARGET;
+            identifier = &argv[i][7];
+        } else {
+            LIB_WARN(0, "invalid recipe `%s`", argv[i]);
+            continue;
+        }
 
-    size_t forced_recipe_count = 0;
-    recipe_t **forced_recipes = NULL;
-    for(size_t i = 0; i < config->recipe_count; i++) {
-        config->recipes[i]->status.built = false;
-        config->recipes[i]->status.invalidated = false;
-        // if(config->recipes[i]->namespace == RECIPE_NAMESPACE_HOST) config->recipes[i]->status.invalidated = true;
-        forced_recipes = reallocarray(forced_recipes, ++forced_recipe_count, sizeof(recipe_t *));
-        forced_recipes[forced_recipe_count - 1] = config->recipes[i];
+        bool found = false;
+        for(size_t i = 0; i < config->recipe_count; i++) {
+            if(config->recipes[i]->namespace != namespace) continue;
+            if(strcmp(config->recipes[i]->name, identifier) != 0) continue;
+            config->recipes[i]->status.invalidated = true;
+            recipe_list_add(&forced_recipes, config->recipes[i]);
+            found = true;
+        }
+        if(!found) LIB_WARN(0, "unknown recipe `%s/%s`", recipe_namespace_stringify(namespace), identifier);
     }
 
-    for(size_t i = 0; i < forced_recipe_count; i++) {
-        if(process_recipe(forced_recipes[i]) < 0) break;
-    }
+    for(size_t i = 0; i < forced_recipes.recipe_count; i++) if(process_recipe(forced_recipes.recipes[i], verbose) < 0) break;
 
-
-    return 0;
+    return EXIT_SUCCESS;
 }
