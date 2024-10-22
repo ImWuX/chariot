@@ -117,14 +117,13 @@ static int install_deps(recipe_t *recipe, bool runtime, const char *source_deps_
     return 0;
 }
 
-static int process_recipe(recipe_t *recipe) {
-    if(recipe->namespace == RECIPE_NAMESPACE_HOST || recipe->namespace == RECIPE_NAMESPACE_TARGET) {
-        assert(recipe->host_target.source.resolved != NULL);
-        if(process_recipe(recipe->host_target.source.resolved) < 0) return -1;
+static int process_recipe(recipe_t *recipe, bool verbose) {
+    if((recipe->namespace == RECIPE_NAMESPACE_HOST || recipe->namespace == RECIPE_NAMESPACE_TARGET) && recipe->host_target.source.resolved != NULL) {
+        if(process_recipe(recipe->host_target.source.resolved, verbose) < 0) return -1;
     }
     for(size_t i = 0; i < recipe->dependency_count; i++) {
         assert(recipe->dependencies[i].resolved != NULL);
-        if(process_recipe(recipe->dependencies[i].resolved) < 0) return -1;
+        if(process_recipe(recipe->dependencies[i].resolved, verbose) < 0) return -1;
     }
 
     LIB_CLEANUP_FREE char *recipe_dir = LIB_PATH_JOIN(PATH_CACHE, recipe_namespace_stringify(recipe->namespace), recipe->name);
@@ -134,6 +133,7 @@ static int process_recipe(recipe_t *recipe) {
     printf("> %s/%s\n", recipe_namespace_stringify(recipe->namespace), recipe->name);
 
     container_context_t *cc = container_context_make(PATH_CACHE "/rootfs", "/root");
+    container_context_set_verbosity(cc, verbose);
 
     // Generate dependency directories
     LIB_CLEANUP_FREE char *source_deps_dir = LIB_PATH_JOIN(PATH_CACHE, "deps", "source");
@@ -244,7 +244,7 @@ static int process_recipe(recipe_t *recipe) {
 
             const char *strap = recipe->source.strap;
             if(strap != NULL) {
-                strap = embed_variables(strap, 1, (embed_variable_t []) { { .name = "sources_dir", .value = "/chariot/sysroot" } });
+                strap = embed_variables(strap, 1, (embed_variable_t []) { { .name = "sources_dir", .value = "/chariot/sources" } });
                 if(strap == NULL) goto terminate;
                 if(container_context_exec_shell(cc, strap) != 0) {
                     LIB_ERROR(0, "shell command failed for `%s/%s`", recipe_namespace_stringify(recipe->namespace), recipe->name);
@@ -259,7 +259,8 @@ static int process_recipe(recipe_t *recipe) {
         host_target: {
             LIB_CLEANUP_FREE char *build_path = LIB_PATH_JOIN(recipe_dir, "build");
             LIB_CLEANUP_FREE char *install_path = LIB_PATH_JOIN(recipe_dir, "install");
-            LIB_CLEANUP_FREE char *source_path = LIB_PATH_JOIN(PATH_CACHE, recipe_namespace_stringify(RECIPE_NAMESPACE_SOURCE), recipe->host_target.source.name, "src");
+            char *source_path = NULL;
+            if(recipe->host_target.source.resolved != NULL) source_path = LIB_PATH_JOIN(PATH_CACHE, recipe_namespace_stringify(RECIPE_NAMESPACE_SOURCE), recipe->host_target.source.name, "src");
 
             if(lib_path_make(build_path, LIB_DEFAULT_MODE) < 0) {
                 LIB_ERROR(0, "failed to create build directory for `%s/%s`", recipe_namespace_stringify(recipe->namespace), recipe->name);
@@ -275,7 +276,7 @@ static int process_recipe(recipe_t *recipe) {
             container_context_mounts_addm(cc, source_deps_mount);
             container_context_mounts_addm(cc, host_deps_mount);
             container_context_mounts_addm(cc, target_deps_mount);
-            container_context_mounts_add(cc, source_path, "/chariot/source", false);
+            if(source_path != NULL) container_context_mounts_add(cc, source_path, "/chariot/source", false);
             container_context_mounts_add(cc, build_path, "/chariot/build", false);
             container_context_mounts_add(cc, install_path, "/chariot/install", false);
 
@@ -284,11 +285,11 @@ static int process_recipe(recipe_t *recipe) {
                 size_t embed_variable_count;
                 const char *command;
             } stages[] = {
-                { .command = recipe->host_target.configure, .embed_variable_count = 4, .embed_variables = (embed_variable_t[]) {
+                { .command = recipe->host_target.configure, .embed_variable_count = source_path != NULL ? 4 : 3, .embed_variables = (embed_variable_t[]) {
                     { .name = "prefix", .value = prefix },
                     { .name = "sysroot_dir", .value = "/chariot/sysroot" },
                     { .name = "sources_dir", .value = "/chariot/sources" },
-                    { .name = "source_dir", .value = "/chariot/source" }
+                    { .name = "source_dir", .value = "/chariot/source" } // keep at bottom so we can drop it with variable count
                 } },
                 { .command = recipe->host_target.build, .embed_variable_count = 4, .embed_variables = (embed_variable_t[]) {
                     { .name = "prefix", .value = prefix },
@@ -314,6 +315,8 @@ static int process_recipe(recipe_t *recipe) {
                 }
                 free((char *) cmd);
             }
+
+            free(source_path);
         } break;
     }
 
