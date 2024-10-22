@@ -14,6 +14,7 @@
                 nativeBuildInputs = with pkgs; [
                     gnumake
                     gcc14
+                    gdb
                 ];
             };
         }
