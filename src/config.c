@@ -132,6 +132,8 @@ static recipe_t *parse_recipe(parser_data_t *parser) {
     recipe->name = identifier;
     recipe->dependencies = NULL;
     recipe->dependency_count = 0;
+    recipe->status.built = false;
+    recipe->status.invalidated = false;
 
     ignore_whitespace(parser);
     expect_char(parser, '{');
