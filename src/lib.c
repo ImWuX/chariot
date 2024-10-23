@@ -175,7 +175,7 @@ int lib_path_copy(const char *dest, const char *src, bool warn_conflicts) {
 
         if(S_ISLNK(st.st_mode)) {
             char buf[PATH_MAX];
-            int len = readlink(dest, buf, PATH_MAX - 1);
+            int len = readlink(src_child, buf, PATH_MAX - 1);
             if(len < 0) {
                 LIB_WARN(errno, "path_copy readlink failure `%s`", dest_child);
                 continue;
