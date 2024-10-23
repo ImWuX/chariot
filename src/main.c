@@ -88,7 +88,7 @@ static int install_rootfs(const char *rootfs_path) {
     return 0;
 }
 
-static int install_deps(recipe_t *recipe, bool runtime, const char *source_deps_dir, const char *host_deps_dir, const char *target_deps_dir, recipe_list_t *installed) {
+static int install_deps(recipe_t *recipe, bool runtime, const char *source_deps_dir, const char *host_deps_dir, const char *target_deps_dir, recipe_list_t *installed, bool warn_conflicts) {
     for(size_t i = 0; i < recipe->dependency_count; i++) {
         if(runtime && !recipe->dependencies[i].runtime) continue;
 
@@ -103,27 +103,27 @@ static int install_deps(recipe_t *recipe, bool runtime, const char *source_deps_
         LIB_CLEANUP_FREE char *source_dep_dir = LIB_PATH_JOIN(source_deps_dir, dependency->name);
 
         switch(dependency->namespace) {
-            case RECIPE_NAMESPACE_SOURCE: if(lib_path_make(source_dep_dir, LIB_DEFAULT_MODE) < 0 || lib_path_copy(source_dep_dir, source_src_dir) < 0) goto error; break;
-            case RECIPE_NAMESPACE_HOST: if(lib_path_copy(host_deps_dir, host_install_dir) < 0) goto error; break;
-            case RECIPE_NAMESPACE_TARGET: if(lib_path_copy(target_deps_dir, target_install_dir) < 0) goto error; break;
+            case RECIPE_NAMESPACE_SOURCE: if(lib_path_make(source_dep_dir, LIB_DEFAULT_MODE) < 0 || lib_path_copy(source_dep_dir, source_src_dir, warn_conflicts) < 0) goto error; break;
+            case RECIPE_NAMESPACE_HOST: if(lib_path_copy(host_deps_dir, host_install_dir, warn_conflicts) < 0) goto error; break;
+            case RECIPE_NAMESPACE_TARGET: if(lib_path_copy(target_deps_dir, target_install_dir, warn_conflicts) < 0) goto error; break;
             error:
                 LIB_ERROR(0, "failed to install dependency `%s/%s` for recipe `%s/%s`", recipe_namespace_stringify(dependency->namespace), dependency->name, recipe_namespace_stringify(recipe->namespace), recipe->name);
                 return -1;
         }
 
         recipe_list_add(installed, dependency);
-        if(install_deps(dependency, true, source_deps_dir, host_deps_dir, target_deps_dir, installed) < 0) return -1;
+        if(install_deps(dependency, true, source_deps_dir, host_deps_dir, target_deps_dir, installed, warn_conflicts) < 0) return -1;
     }
     return 0;
 }
 
-static int process_recipe(recipe_t *recipe, bool verbose) {
+static int process_recipe(recipe_t *recipe, bool verbose, bool warn_conflicts) {
     if((recipe->namespace == RECIPE_NAMESPACE_HOST || recipe->namespace == RECIPE_NAMESPACE_TARGET) && recipe->host_target.source.resolved != NULL) {
-        if(process_recipe(recipe->host_target.source.resolved, verbose) < 0) return -1;
+        if(process_recipe(recipe->host_target.source.resolved, verbose, warn_conflicts) < 0) return -1;
     }
     for(size_t i = 0; i < recipe->dependency_count; i++) {
         assert(recipe->dependencies[i].resolved != NULL);
-        if(process_recipe(recipe->dependencies[i].resolved, verbose) < 0) return -1;
+        if(process_recipe(recipe->dependencies[i].resolved, verbose, warn_conflicts) < 0) return -1;
     }
 
     LIB_CLEANUP_FREE char *recipe_dir = LIB_PATH_JOIN(PATH_CACHE, recipe_namespace_stringify(recipe->namespace), recipe->name);
@@ -145,7 +145,7 @@ static int process_recipe(recipe_t *recipe, bool verbose) {
     }
 
     recipe_list_t installed = RECIPE_LIST_INIT;
-    if(install_deps(recipe, false, source_deps_dir, host_deps_dir, target_deps_dir, &installed) < 0) {
+    if(install_deps(recipe, false, source_deps_dir, host_deps_dir, target_deps_dir, &installed, warn_conflicts) < 0) {
         LIB_ERROR(0, "failed to install dependencies");
         goto terminate;
     }
@@ -169,7 +169,6 @@ static int process_recipe(recipe_t *recipe, bool verbose) {
 
             container_context_mounts_add(cc, recipe_dir, "/chariot/source", false);
 
-
             if(lib_path_make(src_path, LIB_DEFAULT_MODE) < 0) {
                 LIB_ERROR(0, "failed to create src directory for source `%s`", recipe->name);
                 goto terminate;
@@ -185,7 +184,7 @@ static int process_recipe(recipe_t *recipe, bool verbose) {
                         goto terminate;
                     }
 
-                    if(lib_path_copy(src_path, recipe->source.url) < 0) {
+                    if(lib_path_copy(src_path, recipe->source.url, true) < 0) {
                         LIB_ERROR(0, "local copy failed for source `%s`", recipe->name);
                         goto terminate;
                     }
@@ -333,12 +332,13 @@ terminate:
 int main(int argc, char **argv) {
     char *config_path = "./config.chariot";
     char *cmd = NULL;
-    bool verbose = false;
+    bool verbose = false, conflicts = true;
 
     static struct option lopts[] = {
         { .name = "config", .has_arg = required_argument, .val = 1000 },
         { .name = "verbose", .has_arg = no_argument, .val = 1001 },
         { .name = "exec", .has_arg = required_argument, .val = 1002 },
+        { .name = "hide-conflicts", .has_arg = no_argument, .val = 1003 },
         {}
     };
 
@@ -348,6 +348,7 @@ int main(int argc, char **argv) {
             case 1000: config_path = optarg; break;
             case 1001: verbose = true; break;
             case 1002: cmd = optarg; break;
+            case 1003: conflicts = false; break;
         }
     }
 
@@ -400,7 +401,7 @@ int main(int argc, char **argv) {
         if(!found) LIB_WARN(0, "unknown recipe `%s/%s`", recipe_namespace_stringify(namespace), identifier);
     }
 
-    for(size_t i = 0; i < forced_recipes.recipe_count; i++) if(process_recipe(forced_recipes.recipes[i], verbose) < 0) break;
+    for(size_t i = 0; i < forced_recipes.recipe_count; i++) if(process_recipe(forced_recipes.recipes[i], verbose, conflicts) < 0) break;
 
     return EXIT_SUCCESS;
 }

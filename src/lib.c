@@ -137,7 +137,7 @@ int lib_path_write(const char *path, const char *data, const char *mode) {
     return r;
 }
 
-int lib_path_copy(const char *dest, const char *src) {
+int lib_path_copy(const char *dest, const char *src, bool warn_conflicts) {
     DIR *dir = opendir(src);
     if(dir == NULL) {
         LIB_ERROR(errno, "path_copy opendir `%s`", src);
@@ -163,13 +163,13 @@ int lib_path_copy(const char *dest, const char *src) {
                 return -1;
             }
 
-            int r = lib_path_copy(dest_child, src_child);
+            int r = lib_path_copy(dest_child, src_child, warn_conflicts);
             if(r < 0) return r;
             continue;
         }
 
         if(lib_path_exists(dest_child) == 0) {
-            LIB_WARN(0, "path_copy conflict `%s`", dest_child);
+            if(warn_conflicts) LIB_WARN(0, "path_copy conflict `%s`", dest_child);
             continue;
         }
 

@@ -11,6 +11,7 @@ Much inspiration was taken from [xbstrap](https://github.com/managarm/xbstrap), 
 `--exec=<command>` execute a command in the container  
 `--wipe-container` reset the container  
 `--verbose` turn on verbose logging (stdout=on)  
+`--hide-conflicts` hide conflicts during dependency directory population (recommended for automated scripts)  
 
 ## Config
 Charon uses a DSL (Domain Specific Language) since version 2.
